@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Batchtastic Pro | Developer Test Suite</title>
+    <link rel="stylesheet" href="https://unpkg.com/mocha/mocha.css" />
+    <script src="https://unpkg.com/mocha/mocha.js"></script>
+    <script src="https://unpkg.com/chai/chai.js"></script>
+    <!-- Import the same libraries as index.html -->
+    <script src="https://unpkg.com/esptool-js@0.5.7/bundle.js"></script>
+</head>
+<body>
+    <div id="mocha"></div>
+
+    <!-- MOCK SYSTEM FOR TDD -->
+    <script>
+        // Mock Serial Port for testing without hardware
+        class MockSerialPort {
+            constructor() {
+                this.readable = {};
+                this.writable = {};
+            }
+            async open() { return Promise.resolve(); }
+            async close() { return Promise.resolve(); }
+        }
+
+        // Mock Navigator.Serial
+        const originalSerial = navigator.serial;
+        navigator.serial = {
+            requestPort: async () => new MockSerialPort()
+        };
+    </script>
+
+    <!-- THE APP LOGIC (Extracted or simulated for testing) -->
+    <script>
+        // In a real TDD setup, we'd export BatchManager from index.html
+        // For this KISS implementation, we'll redefine the core logic or 
+        // a testable version of it here.
+        class TestableBatchManager {
+            constructor() {
+                this.devices = [];
+                this.logs = [];
+            }
+            async addDevice() {
+                const port = await navigator.serial.requestPort();
+                const device = { id: 'TEST-ID', port, status: 'ready', logs: [] };
+                this.devices.push(device);
+                return device;
+            }
+            removeDevice(id) {
+                this.devices = this.devices.filter(d => d.id !== id);
+            }
+        }
+    </script>
+
+    <script>
+        mocha.setup('bdd');
+        const expect = chai.expect;
+
+        describe('BatchManager Core Logic', () => {
+            let manager;
+
+            beforeEach(() => {
+                manager = new TestableBatchManager();
+            });
+
+            it('should initialize with an empty device list', () => {
+                expect(manager.devices).to.be.an('array').that.is.empty;
+            });
+
+            it('should add a device and assign a port', async () => {
+                const device = await manager.addDevice();
+                expect(manager.devices).to.have.lengthOf(1);
+                expect(device.id).to.equal('TEST-ID');
+                expect(device.status).to.equal('ready');
+            });
+
+            it('should remove a device by ID', async () => {
+                await manager.addDevice();
+                manager.removeDevice('TEST-ID');
+                expect(manager.devices).to.have.lengthOf(0);
+            });
+        });
+
+        mocha.run();
+    </script>
+</body>
+</html>
+

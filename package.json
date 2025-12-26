@@ -1,0 +1,21 @@
+{
+  "name": "batchtastic-pro",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0",
+    "vitest": "^1.0.0"
+  },
+  "dependencies": {
+    "@zip.js/zip.js": "^2.8.11",
+    "esptool-js": "^0.5.7",
+    "qrcode": "^1.5.3"
+  }
+}

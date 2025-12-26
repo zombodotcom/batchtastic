@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Batchtastic Pro | Meshtastic Deployment HUD</title>
+    <link rel="stylesheet" href="./src/style.css">
+</head>
+<body>
+
+<div class="hud-container">
+    <aside class="controls">
+        <div class="card">
+            <h2>⚡ Batch Controls</h2>
+            <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+                <button class="btn btn-primary" style="flex:1" onclick="manager.addDeviceUSB().then(render)">🔌 USB</button>
+                <button class="btn btn-primary" style="flex:1" onclick="manager.addDeviceBLE().then(render).catch(e => alert(e.message))">📶 BLE</button>
+            </div>
+            <button class="btn btn-secondary" style="margin-bottom: 0.5rem;" onclick="const nodeId = prompt('Enter Meshtastic Node ID (or leave blank):'); manager.addDeviceOTA(nodeId || null).then(render)">📡 Add OTA Target</button>
+            <button class="btn btn-success" id="flashAllBtn" onclick="manager.flashAll()" disabled>🚀 Flash & Deploy All</button>
+            <button class="btn btn-success" id="otaBtn" onclick="manager.flashAllOTA().catch(e => alert(e.message))" disabled style="margin-top: 0.5rem;">🌐 OTA Update All</button>
+        </div>
+
+        <div class="card">
+            <h2>💾 Mission Profile</h2>
+            <div class="form-group">
+                <label>Deployment Region</label>
+                <select id="region">
+                    <option value="US">United States (915MHz)</option>
+                    <option value="EU_868">Europe (868MHz)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Primary Channel</label>
+                <input type="text" id="channelName" value="LongFast">
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>📂 Firmware</h2>
+            <div class="form-group">
+                <label>Release Channel</label>
+                <select id="releaseChannel">
+                    <option value="stable">Stable</option>
+                    <option value="alpha">Alpha</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Firmware Version</label>
+                <select id="firmwareType">
+                    <option value="custom">Custom .bin Files</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Target Platform</label>
+                <select id="targetPlatform">
+                    <optgroup label="Heltec">
+                        <option value="heltec-v3">Heltec V3</option>
+                        <option value="heltec-v2">Heltec V2</option>
+                        <option value="heltec-wireless-tracker">Wireless Tracker</option>
+                    </optgroup>
+                    <optgroup label="LilyGO">
+                        <option value="tbeam" selected>T-Beam</option>
+                        <option value="tbeam-s3-core">T-Beam S3</option>
+                        <option value="tlora-v2">T-LoRa V2</option>
+                        <option value="tlora-t3s3-v1">T-LoRa T3S3</option>
+                        <option value="t-deck">T-Deck</option>
+                    </optgroup>
+                    <optgroup label="RAK">
+                        <option value="rak4631">RAK4631</option>
+                        <option value="rak11200">RAK11200</option>
+                    </optgroup>
+                </select>
+            </div>
+            <label style="display: flex; align-items: center; gap: 0.5rem; margin: 0.5rem 0; font-size: 0.85rem;">
+                <input type="checkbox" id="fullInstall">
+                <span style="color: var(--error);">Full Install (Erase All)</span>
+            </label>
+            <input type="file" id="customFile" accept=".bin,.zip" multiple style="margin-top: 0.5rem; display: none;">
+            <div id="firmwareList" style="font-size: 0.7rem; color: var(--text-dim); margin-top: 0.5rem;"></div>
+        </div>
+    </aside>
+
+    <main class="dashboard">
+        <div class="card" style="display:flex; justify-content: space-between; align-items: center;">
+            <h1 style="font-size: 1.25rem;">Batchtastic Pro Hub</h1>
+            <div id="batchStats" style="font-size: 0.8rem; color: var(--text-dim);">
+                0 Nodes Connected | Idle
+            </div>
+        </div>
+
+        <div id="deviceGrid" class="device-grid"></div>
+
+        <div class="card">
+            <h2>📜 Global Batch Log</h2>
+            <div id="globalLog" class="log-container" style="height: 150px;">
+                <div style="color: var(--accent)">[SYSTEM] Ready for batch operation.</div>
+            </div>
+        </div>
+    </main>
+</div>
+
+<script type="module" src="./src/main.js"></script>
+
+</body>
+</html>
