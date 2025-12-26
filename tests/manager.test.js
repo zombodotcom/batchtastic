@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { BatchManager } from '../src/BatchManager.js';
+import { OTAHandler } from '../src/OTAHandler.js';
+import { encodeXModemPacket, encodeOTAStart } from '../src/ProtobufEncoder.js';
+import * as Protobuf from '@meshtastic/protobufs';
 
 // Mock Web Serial API using Object.defineProperty (navigator is read-only)
 Object.defineProperty(global, 'navigator', {
@@ -59,12 +62,27 @@ describe('BatchManager', () => {
             expect(device.connectionType).toBe('usb');
         });
 
+        it('should handle USB device connection errors gracefully', async () => {
+            // Mock navigator.serial.requestPort to reject
+            global.navigator.serial.requestPort = vi.fn(() => Promise.reject(new Error('User cancelled port selection')));
+            
+            await expect(manager.addDeviceUSB()).rejects.toThrow('User cancelled port selection');
+            expect(manager.devices.length).toBe(0);
+        });
+
         it('should add OTA target device', async () => {
             const device = await manager.addDeviceOTA('!12345678');
             expect(manager.devices.length).toBe(1);
             expect(device.connectionType).toBe('ota');
             expect(device.nodeId).toBe('!12345678');
             expect(device.name).toContain('NODE-');
+        });
+
+        it('should handle OTA device errors gracefully', async () => {
+            // OTA doesn't throw errors currently, but test that it handles null nodeId
+            const device = await manager.addDeviceOTA(null);
+            expect(device.nodeId).toBe(null);
+            expect(device.name).toContain('OTA-');
         });
 
         it('should remove a device by ID', async () => {
@@ -212,6 +230,113 @@ describe('BatchManager', () => {
         });
     });
 
+    describe('Configuration Injection', () => {
+        it('should inject configuration to USB device', async () => {
+            const mockWriter = {
+                write: vi.fn(() => Promise.resolve()),
+                releaseLock: vi.fn()
+            };
+            const mockPort = { 
+                name: 'MockPort',
+                writable: {
+                    getWriter: vi.fn(() => mockWriter)
+                },
+                open: vi.fn(() => Promise.resolve())
+            };
+            const device = await manager.addDevice(mockPort);
+            
+            const config = {
+                region: 'US',
+                channelName: 'LongFast',
+                role: 'ROUTER'
+            };
+            
+            await manager.injectConfig(device.id, config);
+            
+            expect(mockWriter.write).toHaveBeenCalled();
+            expect(mockWriter.releaseLock).toHaveBeenCalled();
+            expect(manager.globalLogs.some(log => log.includes('Config injected'))).toBe(true);
+        });
+
+        it('should inject configuration to BLE device', async () => {
+            const mockBLE = {
+                write: vi.fn(() => Promise.resolve()),
+                connect: vi.fn(() => Promise.resolve({ name: 'BLE-Device' }))
+            };
+            
+            // Mock BLETransport
+            const device = await manager._createDevice(mockBLE, 'ble', { name: 'BLE-Device' });
+            
+            const config = {
+                region: 'EU_868',
+                channelName: 'MediumFast'
+            };
+            
+            await manager.injectConfig(device.id, config);
+            
+            expect(mockBLE.write).toHaveBeenCalled();
+        });
+
+        it('should throw error if device not found for config injection', async () => {
+            const config = { region: 'US' };
+            await expect(manager.injectConfig('nonexistent', config)).rejects.toThrow('Device not found');
+        });
+
+        it('should validate config before injection', async () => {
+            const mockPort = { name: 'MockPort' };
+            const device = await manager.addDevice(mockPort);
+            
+            const invalidConfig = { invalidField: 'value' };
+            
+            // Should validate and reject invalid config
+            await expect(manager.injectConfig(device.id, invalidConfig)).rejects.toThrow();
+        });
+
+        it('should encode config as protobuf ToRadio message', async () => {
+            const config = { region: 'US', channelName: 'LongFast' };
+            
+            // Test that config encoding produces binary data
+            const encoded = manager._encodeConfigToProtobuf(config);
+            
+            expect(encoded).toBeInstanceOf(Uint8Array);
+            expect(encoded.length).toBeGreaterThan(0);
+        });
+
+        it('should handle protobuf encoding errors gracefully', () => {
+            const invalidConfig = null;
+            
+            expect(() => manager._encodeConfigToProtobuf(invalidConfig)).toThrow();
+        });
+
+        it('should inject mission profile config', async () => {
+            const mockWriter = {
+                write: vi.fn(() => Promise.resolve()),
+                releaseLock: vi.fn()
+            };
+            const mockPort = { 
+                name: 'MockPort',
+                writable: {
+                    getWriter: vi.fn(() => mockWriter)
+                },
+                open: vi.fn(() => Promise.resolve())
+            };
+            const device = await manager.addDevice(mockPort);
+            
+            const missionProfile = {
+                name: 'Community Relay',
+                region: 'US',
+                channelName: 'LongFast',
+                role: 'ROUTER',
+                modemPreset: 'LONG_FAST'
+            };
+            
+            await manager.injectMissionProfile(device.id, missionProfile);
+            
+            expect(mockWriter.write).toHaveBeenCalled();
+            expect(manager.globalLogs.some(log => log.includes('Mission profile'))).toBe(true);
+        });
+    });
+
     describe('Report Export', () => {
         it('should export report with device data', async () => {
             const mockPort = { name: 'MockPort' };
@@ -240,6 +365,117 @@ describe('BatchManager', () => {
             expect(manager.globalLogs.some(log => log.includes('Report exported'))).toBe(true);
             expect(global.document.createElement).toHaveBeenCalledWith('a');
             expect(mockAnchor.click).toHaveBeenCalled();
+        });
+    });
+
+    describe('OTA (Over-The-Air) Updates', () => {
+        it('should encode XModem packet correctly', () => {
+            const testData = new Uint8Array(128).fill(0x42);
+            const packet = encodeXModemPacket(
+                Protobuf.Xmodem.XModem_Control.SOH,
+                testData,
+                1
+            );
+            
+            expect(packet).toBeInstanceOf(Uint8Array);
+            expect(packet.length).toBeGreaterThan(0);
+        });
+
+        it('should encode OTA start message with filename', () => {
+            const filename = 'firmware-tbeam-v2.0.0.bin';
+            const packet = encodeOTAStart(filename);
+            
+            expect(packet).toBeInstanceOf(Uint8Array);
+            expect(packet.length).toBeGreaterThan(0);
+        });
+
+        it('should prepare firmware into 128-byte chunks', async () => {
+            const mockTransport = {
+                write: vi.fn(() => Promise.resolve())
+            };
+            
+            const otaHandler = new OTAHandler(mockTransport);
+            
+            // Create test firmware (500 bytes - should create 4 chunks: 128+128+128+116 padded to 128)
+            const firmware = new Uint8Array(500).fill(0xAA);
+            const chunkCount = await otaHandler.prepareFirmware(firmware);
+            
+            expect(chunkCount).toBe(4); // 500 / 128 = 3.9, rounded up = 4
+            expect(otaHandler.firmwareChunks.length).toBe(4);
+            expect(otaHandler.firmwareChunks[0].length).toBe(128);
+            expect(otaHandler.firmwareChunks[3].length).toBe(128); // Last chunk padded
+        });
+
+        it('should handle firmware that divides evenly into chunks', async () => {
+            const mockTransport = {
+                write: vi.fn(() => Promise.resolve())
+            };
+            
+            const otaHandler = new OTAHandler(mockTransport);
+            
+            // 256 bytes = exactly 2 chunks
+            const firmware = new Uint8Array(256).fill(0xBB);
+            const chunkCount = await otaHandler.prepareFirmware(firmware);
+            
+            expect(chunkCount).toBe(2);
+            expect(otaHandler.firmwareChunks.length).toBe(2);
+            expect(otaHandler.firmwareChunks[0].length).toBe(128);
+            expect(otaHandler.firmwareChunks[1].length).toBe(128);
+        });
+
+        it('should throw error if flashAllOTA called without gateway', async () => {
+            await expect(manager.flashAllOTA()).rejects.toThrow('No OTA Gateway set');
+        });
+
+        it('should throw error if flashAllOTA called without firmware', async () => {
+            const mockPort = { name: 'MockPort' };
+            const device = await manager.addDevice(mockPort);
+            manager.setOTAGateway(device.id);
+            
+            await expect(manager.flashAllOTA()).rejects.toThrow('No firmware selected');
+        });
+
+        it('should throw error if flashAllOTA called without OTA targets', async () => {
+            const mockPort = { 
+                name: 'MockPort',
+                writable: {
+                    getWriter: vi.fn(() => ({
+                        write: vi.fn(() => Promise.resolve()),
+                        releaseLock: vi.fn()
+                    }))
+                },
+                open: vi.fn(() => Promise.resolve())
+            };
+            const device = await manager.addDevice(mockPort);
+            manager.setOTAGateway(device.id);
+            
+            // Add firmware binary
+            manager.firmwareBinaries = [{
+                filename: 'test.bin',
+                data: new Uint8Array(256)
+            }];
+            
+            await expect(manager.flashAllOTA()).rejects.toThrow('No OTA target nodes added');
+        });
+
+        it('should handle OTA start message sending', async () => {
+            const mockWriter = {
+                write: vi.fn(() => Promise.resolve()),
+                releaseLock: vi.fn()
+            };
+            const mockPort = { 
+                name: 'MockPort',
+                writable: {
+                    getWriter: vi.fn(() => mockWriter)
+                },
+                open: vi.fn(() => Promise.resolve())
+            };
+            
+            const otaHandler = new OTAHandler(mockPort);
+            await otaHandler.startOTA('test-firmware.bin');
+            
+            expect(mockWriter.write).toHaveBeenCalled();
+            expect(mockWriter.releaseLock).toHaveBeenCalled();
         });
     });
 });

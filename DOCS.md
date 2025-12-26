@@ -57,14 +57,99 @@ The tool uses filename detection to set these offsets. If you use a unified bina
 ## 🛠️ Developer & TDD Guide
 
 ### 🧪 Running Tests
-To ensure stability for other developers, we've included a **Browser-based Test Suite**.
-- Open `test.html` in your browser.
-- It uses **Mocha** and **Chai** to run unit tests against a **Mock Hardware System**.
-- This allows you to verify state transitions and logic without needing physical ESP32 nodes connected.
+Batchtastic Pro uses **Vitest** for professional test-driven development.
 
-### 🏗️ Test-Driven Development (TDD)
-If you are adding a new "Mission" or hardware feature:
-1. Update `MockSerialPort` in `test.html` to simulate the new hardware behavior.
-2. Write a failing test in `test.html`.
-3. Implement the feature in `index.html` until the test passes.
+```bash
+# Run tests in watch mode (recommended during development)
+npm run test
+
+# Run tests once
+npm run test -- --run
+
+# Run tests with coverage
+npm run test -- --coverage
+```
+
+### 🏗️ Test-Driven Development (TDD) Workflow
+
+We follow **Red → Green → Refactor** TDD cycle:
+
+1. **Red**: Write a failing test first
+2. **Green**: Implement minimal code to make it pass
+3. **Refactor**: Clean up while keeping tests green
+
+#### Example: Adding a New Feature
+
+```javascript
+// tests/manager.test.js
+describe('New Feature', () => {
+    it('should do something new', () => {
+        const manager = new BatchManager();
+        // Write test first - this will fail
+        expect(manager.newMethod()).toBe(expectedValue);
+    });
+});
+
+// src/BatchManager.js
+// Then implement the feature
+newMethod() {
+    return expectedValue; // Minimal implementation
+}
+```
+
+### 🎯 Current Test Coverage
+
+- ✅ Device Management (USB, BLE, OTA)
+- ✅ Firmware Release Fetching
+- ✅ Firmware File Loading & ZIP Extraction
+- ✅ Error Handling
+- ✅ Logging System
+- ✅ OTA Gateway Management
+- ✅ Report Export
+
+### 🧩 Mocking Hardware
+
+Tests use mocked Web Serial API and Web Bluetooth:
+
+```javascript
+// Mock Web Serial
+Object.defineProperty(global, 'navigator', {
+    value: {
+        serial: {
+            requestPort: vi.fn(() => Promise.resolve({ name: 'MockPort' }))
+        }
+    }
+});
+```
+
+### 📝 Writing Good Tests
+
+1. **Test one thing**: Each test should verify a single behavior
+2. **Use descriptive names**: `should handle USB connection errors gracefully`
+3. **Arrange-Act-Assert**: Set up → Execute → Verify
+4. **Mock external dependencies**: Don't rely on network/real hardware in tests
+5. **Test edge cases**: Errors, null values, empty arrays, etc.
+
+### 🚀 Adding Tests for New Features
+
+When adding a feature:
+
+1. **Write the test first** in `tests/manager.test.js`
+2. **Run tests** - should fail (Red)
+3. **Implement feature** in `src/BatchManager.js`
+4. **Run tests** - should pass (Green)
+5. **Refactor** if needed, keeping tests green
+
+### 🔍 Debugging Tests
+
+```bash
+# Run specific test file
+npm run test -- tests/manager.test.js
+
+# Run tests matching pattern
+npm run test -- --grep "firmware"
+
+# Run in verbose mode
+npm run test -- --reporter=verbose
+```
 

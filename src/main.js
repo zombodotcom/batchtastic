@@ -1,6 +1,26 @@
 import { BatchManager } from './BatchManager.js';
+import { renderSNRChart, renderAirUtilChart } from './ChartRenderer.js';
+import { startTelemetryUpdates } from './TelemetrySimulator.js';
+import { PacketRain } from './PacketRain.js';
 
 const manager = new BatchManager();
+
+// Initialize Packet Rain
+let packetRain = null;
+const packetRainCanvas = document.getElementById('packetRainCanvas');
+if (packetRainCanvas) {
+    packetRain = new PacketRain(packetRainCanvas, manager.devices);
+    packetRain.start();
+    
+    // Toggle button
+    const toggleBtn = document.getElementById('packetRainToggle');
+    if (toggleBtn) {
+        toggleBtn.onclick = () => {
+            packetRain.toggle();
+            toggleBtn.textContent = packetRain.enabled ? 'Disable' : 'Enable';
+        };
+    }
+}
 
 // Make manager globally available for onclick handlers
 window.manager = manager;
@@ -214,6 +234,18 @@ function render() {
                     <div class="telemetry-value">${d.telemetry.util}%</div>
                 </div>
             </div>
+            ${d.snrHistory && d.snrHistory.length > 0 ? `
+                <div style="margin-top: 0.5rem;">
+                    <div style="font-size: 0.7rem; color: var(--text-dim); margin-bottom: 0.25rem;">SNR Trend</div>
+                    ${renderSNRChart(d.snrHistory, 200, 60)}
+                </div>
+            ` : ''}
+            ${d.airUtilHistory && d.airUtilHistory.length > 0 ? `
+                <div style="margin-top: 0.5rem;">
+                    <div style="font-size: 0.7rem; color: var(--text-dim); margin-bottom: 0.25rem;">Air Utilization</div>
+                    ${renderAirUtilChart(d.airUtilHistory, 200, 60)}
+                </div>
+            ` : ''}
             <div class="log-container">
                 ${d.logs.slice(0, 20).map(l => `<div>${l}</div>`).join('')}
             </div>
@@ -230,6 +262,69 @@ function render() {
     
     updateButtons();
 }
+
+// Mission Profile Application
+window.applyMissionProfile = async function() {
+    const region = document.getElementById('region')?.value;
+    const channelName = document.getElementById('channelName')?.value;
+    const nodeRole = document.getElementById('nodeRole')?.value;
+    
+    if (!region || !channelName) {
+        alert('Please fill in Region and Channel Name');
+        return;
+    }
+    
+    const profile = {
+        name: 'Batch Profile',
+        region: region,
+        channelName: channelName,
+        role: nodeRole
+    };
+    
+    try {
+        manager.logGlobal(`Applying mission profile to all devices...`);
+        render();
+        const result = await manager.injectConfigAll(profile);
+        manager.logGlobal(`✅ Profile applied: ${result.successful} success, ${result.failed} failed`);
+        render();
+    } catch (e) {
+        alert(`Config injection error: ${e.message}`);
+    }
+};
+
+// Start telemetry updates (simulated for now)
+// In production, this would be replaced with real Meshtastic packet parsing
+let telemetryInterval = null;
+function startTelemetry() {
+    if (!telemetryInterval) {
+        telemetryInterval = startTelemetryUpdates(manager, 2000); // Update every 2 seconds
+    }
+}
+function stopTelemetry() {
+    if (telemetryInterval) {
+        clearInterval(telemetryInterval);
+        telemetryInterval = null;
+    }
+}
+
+// Wrap render to auto-start/stop telemetry and update packet rain
+const originalRender = render;
+render = function() {
+    originalRender();
+    
+    // Update packet rain
+    if (packetRain) {
+        packetRain.update(manager.devices);
+    }
+    
+    // Auto-start/stop telemetry
+    if (manager.devices.length > 0 && !telemetryInterval) {
+        startTelemetry();
+    } else if (manager.devices.length === 0 && telemetryInterval) {
+        stopTelemetry();
+    }
+};
+window.render = render; // Update global reference
 
 // Initial render
 render();

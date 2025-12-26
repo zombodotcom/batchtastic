@@ -1,6 +1,7 @@
 import { BLETransport } from './BLETransport.js';
 import { OTAHandler } from './OTAHandler.js';
 import { BlobReader, ZipReader, BlobWriter } from '@zip.js/zip.js';
+import { encodeConfigToProtobuf, encodeMultipleConfigsToProtobuf, encodeBeginEditSettings } from './ProtobufEncoder.js';
 
 /**
  * Convert ArrayBuffer to binary string (required by esptool-js)
@@ -138,6 +139,8 @@ export class BatchManager {
             logs: [],
             nodeId: nodeId,
             telemetry: { batt: '--', snr: '--', util: '--' },
+            snrHistory: [],
+            airUtilHistory: [],
             name: nodeId ? `NODE-${nodeId}` : `OTA-${deviceId}`
         };
         this.devices.push(device);
@@ -173,6 +176,8 @@ export class BatchManager {
                 snr: (Math.random() * 10 - 5).toFixed(1), 
                 util: Math.floor(Math.random() * 30) 
             },
+            snrHistory: [], // Time-series SNR data for charts
+            airUtilHistory: [], // Time-series air utilization data
             loader: null,
             chipInfo: null,
             name: info.name || `NODE-${deviceId}`
@@ -209,6 +214,42 @@ export class BatchManager {
         const time = new Date().toLocaleTimeString([], { hour12: false });
         this.globalLogs.unshift(`[${time}] ${msg}`);
         if (this.globalLogs.length > 100) this.globalLogs.pop();
+    }
+
+    /**
+     * Update device telemetry from Meshtastic protobuf packet
+     * Also updates SNR and Air Util history for charts
+     */
+    updateTelemetry(deviceId, telemetryData) {
+        const device = this.devices.find(d => d.id === deviceId);
+        if (!device) return;
+
+        const now = Date.now();
+        
+        // Update current telemetry values
+        if (telemetryData.batteryVoltage !== undefined) {
+            device.telemetry.batt = telemetryData.batteryVoltage.toFixed(2);
+        }
+        if (telemetryData.snr !== undefined) {
+            const snrValue = parseFloat(telemetryData.snr.toFixed(1));
+            device.telemetry.snr = snrValue;
+            
+            // Add to SNR history (limit to last 100 points)
+            device.snrHistory.push({ timestamp: now, snr: snrValue });
+            if (device.snrHistory.length > 100) {
+                device.snrHistory.shift();
+            }
+        }
+        if (telemetryData.airUtilTx !== undefined) {
+            const utilValue = Math.floor(telemetryData.airUtilTx);
+            device.telemetry.util = utilValue;
+            
+            // Add to Air Util history
+            device.airUtilHistory.push({ timestamp: now, util: utilValue });
+            if (device.airUtilHistory.length > 100) {
+                device.airUtilHistory.shift();
+            }
+        }
     }
 
     /**
@@ -388,7 +429,7 @@ export class BatchManager {
         }
 
         this.isFlashing = true;
-        this.logGlobal("=== Starting OTA Bulk Update ===");
+        this.logGlobal("=== Starting OTA Bulk Update (XModem Protocol) ===");
         
         const gateway = this.otaGateway;
         const otaTargets = this.devices.filter(d => d.connectionType === 'ota');
@@ -397,43 +438,93 @@ export class BatchManager {
             throw new Error('No OTA target nodes added.');
         }
 
-        this.log(gateway, `Broadcasting firmware to ${otaTargets.length} nodes...`);
+        // Ensure gateway connection is open
+        if (gateway.connectionType === 'usb' && !gateway.connection.writable) {
+            await gateway.connection.open({ baudRate: this.baudRate });
+        }
+
+        this.log(gateway, `Broadcasting firmware to ${otaTargets.length} node(s)...`);
         
         try {
-            const otaHandler = new OTAHandler(gateway.connection);
+            // Get firmware binary and filename
             const firmwareBinary = this.firmwareBinaries[0].data;
-            const chunkCount = await otaHandler.prepareFirmware(firmwareBinary);
+            const firmwareFilename = this.firmwareBinaries[0].filename || 'firmware.bin';
             
-            this.log(gateway, `Firmware prepared: ${chunkCount} chunks`);
-            await otaHandler.broadcastOTA(otaTargets.map(t => t.nodeId).filter(Boolean));
-            this.log(gateway, "OTA announcement broadcasted");
-            
-            for (let i = 0; i < chunkCount; i++) {
-                const progress = Math.floor((i / chunkCount) * 100);
+            // Set up progress callback
+            const onProgress = (chunkIndex, totalChunks) => {
+                const progress = Math.floor((chunkIndex / totalChunks) * 100);
                 otaTargets.forEach(target => {
                     target.progress = progress;
-                    if (i % 10 === 0) {
-                        this.log(target, `Receiving chunk ${i + 1}/${chunkCount}`);
-                    }
                 });
                 if (typeof window.render === 'function') window.render();
-                await new Promise(r => setTimeout(r, 100));
+            };
+            
+            // Create OTA handler with progress callback
+            const otaHandler = new OTAHandler(gateway.connection, onProgress);
+            
+            // Prepare firmware (split into 128-byte chunks)
+            const chunkCount = await otaHandler.prepareFirmware(firmwareBinary);
+            this.log(gateway, `Firmware prepared: ${chunkCount} chunks (${firmwareBinary.length} bytes)`);
+            
+            // Send OTA start message (STX with filename)
+            await otaHandler.startOTA(firmwareFilename);
+            this.log(gateway, `OTA start sent: ${firmwareFilename}`);
+            
+            // Small delay to allow device to process start message
+            await new Promise(resolve => setTimeout(resolve, 200));
+            
+            // Send chunks sequentially (wait for ACK before next chunk)
+            let successfulChunks = 0;
+            let failedChunks = 0;
+            
+            for (let i = 0; i < chunkCount; i++) {
+                const success = await otaHandler.sendChunk(i, 3); // 3 retries max
+                
+                if (success) {
+                    successfulChunks++;
+                    if (i % 10 === 0 || i === chunkCount - 1) {
+                        this.log(gateway, `Chunk ${i + 1}/${chunkCount} sent and acknowledged`);
+                    }
+                } else {
+                    failedChunks++;
+                    this.log(gateway, `⚠️ Chunk ${i + 1}/${chunkCount} failed after retries`);
+                }
+                
+                // Small delay between chunks
+                await new Promise(resolve => setTimeout(resolve, 50));
             }
             
-            otaTargets.forEach(target => {
-                target.status = 'done';
-                target.progress = 100;
-                this.log(target, "✅ OTA update complete");
-            });
+            // Send End of Transmission (EOT)
+            await otaHandler.sendEOT();
+            this.log(gateway, "End of Transmission (EOT) sent");
             
-            this.logGlobal(`=== OTA Update Complete: ${otaTargets.length} nodes updated ===`);
+            // Update target statuses
+            if (failedChunks === 0) {
+                otaTargets.forEach(target => {
+                    target.status = 'done';
+                    target.progress = 100;
+                    this.log(target, "✅ OTA update complete");
+                });
+                this.logGlobal(`=== OTA Update Complete: ${otaTargets.length} node(s) updated successfully ===`);
+            } else {
+                otaTargets.forEach(target => {
+                    target.status = failedChunks < chunkCount / 2 ? 'warning' : 'error';
+                    this.log(target, `⚠️ OTA update completed with ${failedChunks} failed chunks`);
+                });
+                this.logGlobal(`=== OTA Update Completed with Errors: ${successfulChunks}/${chunkCount} chunks successful ===`);
+            }
+            
         } catch (e) {
             this.log(gateway, `❌ OTA Failed: ${e.message}`);
-            otaTargets.forEach(t => t.status = 'error');
+            otaTargets.forEach(t => {
+                t.status = 'error';
+                t.progress = 0;
+            });
+            throw e;
+        } finally {
+            this.isFlashing = false;
+            if (typeof window.render === 'function') window.render();
         }
-        
-        this.isFlashing = false;
-        if (typeof window.render === 'function') window.render();
     }
 
     /**
@@ -531,6 +622,174 @@ export class BatchManager {
         }
         
         return this.firmwareBinaries;
+    }
+
+    /**
+     * Encode configuration as Meshtastic protobuf ToRadio message
+     * Returns Uint8Array ready to send over serial/BLE
+     */
+    _encodeConfigToProtobuf(config) {
+        return encodeConfigToProtobuf(config);
+    }
+    
+    /**
+     * Send beginEditSettings message to device (required before config changes)
+     */
+    async _beginEditSettings(device) {
+        try {
+            const beginEditData = encodeBeginEditSettings();
+            
+            if (device.connectionType === 'usb') {
+                if (!device.connection.writable) {
+                    await device.connection.open({ baudRate: this.baudRate });
+                }
+                const writer = device.connection.writable.getWriter();
+                await writer.write(beginEditData);
+                writer.releaseLock();
+            } else if (device.connectionType === 'ble') {
+                if (device.connection.write) {
+                    await device.connection.write(beginEditData);
+                } else {
+                    throw new Error('BLE connection does not support write');
+                }
+            }
+            
+            // Small delay to allow device to process
+            await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (e) {
+            this.log(device, `⚠️ beginEditSettings failed: ${e.message}`);
+            // Continue anyway - some devices may not require this
+        }
+    }
+
+    /**
+     * Validate configuration object
+     */
+    _validateConfig(config) {
+        const validFields = ['region', 'channelName', 'role', 'modemPreset', 'txPower', 'hopLimit'];
+        const hasValidField = Object.keys(config).some(key => validFields.includes(key));
+        
+        if (!hasValidField) {
+            throw new Error('Config must contain at least one valid field: ' + validFields.join(', '));
+        }
+        
+        // Validate region
+        if (config.region && !['US', 'EU_868', 'EU_433', 'CN', 'JP', 'ANZ', 'KR', 'TW', 'RU', 'IN', 'NZ_865', 'TH', 'LORA_24', 'UA_433', 'UA_868', 'MY_433', 'MY_919', 'SG_923'].includes(config.region)) {
+            throw new Error(`Invalid region: ${config.region}`);
+        }
+        
+        return true;
+    }
+
+    /**
+     * Inject configuration to a device
+     * Supports both USB (Web Serial) and BLE (Web Bluetooth) connections
+     */
+    async injectConfig(deviceId, config) {
+        const device = this.devices.find(d => d.id === deviceId);
+        if (!device) {
+            throw new Error('Device not found');
+        }
+
+        this._validateConfig(config);
+        
+        this.log(device, `Injecting config: ${JSON.stringify(config)}`);
+
+        try {
+            // Begin edit settings (required by Meshtastic before config changes)
+            await this._beginEditSettings(device);
+            
+            // Encode config(s) - may return multiple messages if both region and role are set
+            const protobufMessages = encodeMultipleConfigsToProtobuf(config);
+            
+            if (protobufMessages.length === 0) {
+                throw new Error('No valid config fields to encode');
+            }
+            
+            // Send all config messages
+            for (const protobufData of protobufMessages) {
+                if (device.connectionType === 'usb') {
+                    // USB: Send via Web Serial
+                    if (!device.connection.writable) {
+                        await device.connection.open({ baudRate: this.baudRate });
+                    }
+                    
+                    const writer = device.connection.writable.getWriter();
+                    await writer.write(protobufData);
+                    writer.releaseLock();
+                    
+                    // Small delay between messages
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                    
+                } else if (device.connectionType === 'ble') {
+                    // BLE: Send via Web Bluetooth
+                    if (device.connection.write) {
+                        await device.connection.write(protobufData);
+                        // Small delay between messages
+                        await new Promise(resolve => setTimeout(resolve, 50));
+                    } else {
+                        throw new Error('BLE connection does not support write');
+                    }
+                } else {
+                    throw new Error(`Cannot inject config to ${device.connectionType} device`);
+                }
+            }
+
+            this.log(device, '✅ Config injected successfully');
+            this.logGlobal(`Config injected to ${device.name}`);
+            
+        } catch (e) {
+            this.log(device, `❌ Config injection failed: ${e.message}`);
+            throw e;
+        }
+    }
+
+    /**
+     * Inject a complete mission profile to a device
+     */
+    async injectMissionProfile(deviceId, profile) {
+        const device = this.devices.find(d => d.id === deviceId);
+        if (!device) {
+            throw new Error('Device not found');
+        }
+
+        this.log(device, `Injecting mission profile: ${profile.name || 'Unnamed'}`);
+        
+        // Build config from mission profile
+        const config = {};
+        
+        if (profile.region) config.region = profile.region;
+        if (profile.channelName) config.channelName = profile.channelName;
+        if (profile.role) config.role = profile.role;
+        if (profile.modemPreset) config.modemPreset = profile.modemPreset;
+        if (profile.txPower) config.txPower = profile.txPower;
+        if (profile.hopLimit) config.hopLimit = profile.hopLimit;
+        
+        await this.injectConfig(deviceId, config);
+        this.log(device, `✅ Mission profile "${profile.name || 'Unnamed'}" applied`);
+    }
+
+    /**
+     * Inject configuration to all connected devices
+     */
+    async injectConfigAll(config) {
+        const targetDevices = this.devices.filter(d => d.connectionType !== 'ota');
+        
+        if (targetDevices.length === 0) {
+            throw new Error('No devices connected for config injection');
+        }
+
+        this.logGlobal(`Injecting config to ${targetDevices.length} device(s)...`);
+        
+        const results = await Promise.allSettled(
+            targetDevices.map(d => this.injectConfig(d.id, config))
+        );
+
+        const successful = results.filter(r => r.status === 'fulfilled').length;
+        const failed = results.filter(r => r.status === 'rejected').length;
+
+        this.logGlobal(`Config injection complete: ${successful} success, ${failed} failed`);
+        return { successful, failed };
     }
 
     exportReport() {

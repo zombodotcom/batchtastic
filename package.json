@@ -14,7 +14,10 @@
     "vitest": "^1.0.0"
   },
   "dependencies": {
+    "@bufbuild/protobuf": "^2.10.2",
+    "@meshtastic/protobufs": "^2.7.8",
     "@zip.js/zip.js": "^2.8.11",
+    "crc": "^4.3.2",
     "esptool-js": "^0.5.7",
     "qrcode": "^1.5.3"
   }

@@ -13,10 +13,10 @@
         <div class="card">
             <h2>⚡ Batch Controls</h2>
             <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
-                <button class="btn btn-primary" style="flex:1" onclick="manager.addDeviceUSB().then(render)">🔌 USB</button>
+                <button class="btn btn-primary" style="flex:1" onclick="manager.addDeviceUSB().then(render).catch(e => alert(e.message))">🔌 USB</button>
                 <button class="btn btn-primary" style="flex:1" onclick="manager.addDeviceBLE().then(render).catch(e => alert(e.message))">📶 BLE</button>
             </div>
-            <button class="btn btn-secondary" style="margin-bottom: 0.5rem;" onclick="const nodeId = prompt('Enter Meshtastic Node ID (or leave blank):'); manager.addDeviceOTA(nodeId || null).then(render)">📡 Add OTA Target</button>
+            <button class="btn btn-secondary" style="margin-bottom: 0.5rem;" onclick="const nodeId = prompt('Enter Meshtastic Node ID (or leave blank):'); manager.addDeviceOTA(nodeId || null).then(render).catch(e => alert(e.message))">📡 Add OTA Target</button>
             <button class="btn btn-success" id="flashAllBtn" onclick="manager.flashAll()" disabled>🚀 Flash & Deploy All</button>
             <button class="btn btn-success" id="otaBtn" onclick="manager.flashAllOTA().catch(e => alert(e.message))" disabled style="margin-top: 0.5rem;">🌐 OTA Update All</button>
         </div>
@@ -28,12 +28,24 @@
                 <select id="region">
                     <option value="US">United States (915MHz)</option>
                     <option value="EU_868">Europe (868MHz)</option>
+                    <option value="EU_433">Europe (433MHz)</option>
+                    <option value="CN">China (470MHz)</option>
+                    <option value="JP">Japan (920MHz)</option>
                 </select>
             </div>
             <div class="form-group">
                 <label>Primary Channel</label>
                 <input type="text" id="channelName" value="LongFast">
             </div>
+            <div class="form-group">
+                <label>Node Role</label>
+                <select id="nodeRole">
+                    <option value="ROUTER">Router</option>
+                    <option value="CLIENT">Client</option>
+                    <option value="CLIENT_MUTE">Client Mute</option>
+                </select>
+            </div>
+            <button class="btn btn-primary" style="margin-top: 0.5rem;" onclick="applyMissionProfile()">⚙️ Apply to All Devices</button>
         </div>
 
         <div class="card">
@@ -90,6 +102,15 @@
         </div>
 
         <div id="deviceGrid" class="device-grid"></div>
+        
+        <!-- Packet Rain Visualization -->
+        <div style="position: relative; margin-top: 1rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                <h3 style="margin: 0; font-size: 0.9rem;">📡 Mesh Activity</h3>
+                <button id="packetRainToggle" class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">Toggle</button>
+            </div>
+            <canvas id="packetRainCanvas" style="width: 100%; height: 200px; background: var(--bg-secondary); border-radius: 4px; display: block;"></canvas>
+        </div>
 
         <div class="card">
             <h2>📜 Global Batch Log</h2>
