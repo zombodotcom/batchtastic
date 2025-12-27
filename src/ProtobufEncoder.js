@@ -1,66 +1,18 @@
 import { create, toBinary } from '@bufbuild/protobuf';
 import * as Protobuf from '@meshtastic/protobufs';
 import crc16ccitt from 'crc/calculators/crc16ccitt';
-
-/**
- * Map our region strings to Meshtastic RegionCode enum values
- */
-const REGION_MAP = {
-    'US': Protobuf.Config.Config_LoRaConfig_RegionCode.US,
-    'EU_868': Protobuf.Config.Config_LoRaConfig_RegionCode.EU_868,
-    'EU_433': Protobuf.Config.Config_LoRaConfig_RegionCode.EU_433,
-    'CN': Protobuf.Config.Config_LoRaConfig_RegionCode.CN,
-    'JP': Protobuf.Config.Config_LoRaConfig_RegionCode.JP,
-    'ANZ': Protobuf.Config.Config_LoRaConfig_RegionCode.ANZ,
-    'KR': Protobuf.Config.Config_LoRaConfig_RegionCode.KR,
-    'TW': Protobuf.Config.Config_LoRaConfig_RegionCode.TW,
-    'RU': Protobuf.Config.Config_LoRaConfig_RegionCode.RU,
-    'IN': Protobuf.Config.Config_LoRaConfig_RegionCode.IN,
-    'NZ_865': Protobuf.Config.Config_LoRaConfig_RegionCode.NZ_865,
-    'TH': Protobuf.Config.Config_LoRaConfig_RegionCode.TH,
-    'LORA_24': Protobuf.Config.Config_LoRaConfig_RegionCode.LORA_24,
-    'UA_433': Protobuf.Config.Config_LoRaConfig_RegionCode.UA_433,
-    'UA_868': Protobuf.Config.Config_LoRaConfig_RegionCode.UA_868,
-    'MY_433': Protobuf.Config.Config_LoRaConfig_RegionCode.MY_433,
-    'MY_919': Protobuf.Config.Config_LoRaConfig_RegionCode.MY_919,
-    'SG_923': Protobuf.Config.Config_LoRaConfig_RegionCode.SG_923
-};
-
-/**
- * Map our role strings to Meshtastic Role enum values
- */
-const ROLE_MAP = {
-    'CLIENT': Protobuf.Config.Config_DeviceConfig_Role.CLIENT,
-    'CLIENT_MUTE': Protobuf.Config.Config_DeviceConfig_Role.CLIENT_MUTE,
-    'ROUTER': Protobuf.Config.Config_DeviceConfig_Role.ROUTER,
-    'TRACKER': Protobuf.Config.Config_DeviceConfig_Role.TRACKER,
-    'SENSOR': Protobuf.Config.Config_DeviceConfig_Role.SENSOR,
-    'TAK': Protobuf.Config.Config_DeviceConfig_Role.TAK,
-    'CLIENT_HIDDEN': Protobuf.Config.Config_DeviceConfig_Role.CLIENT_HIDDEN,
-    'LOST_AND_FOUND': Protobuf.Config.Config_DeviceConfig_Role.LOST_AND_FOUND,
-    'TAK_TRACKER': Protobuf.Config.Config_DeviceConfig_Role.TAK_TRACKER,
-    'ROUTER_LATE': Protobuf.Config.Config_DeviceConfig_Role.ROUTER_LATE,
-    'CLIENT_BASE': Protobuf.Config.Config_DeviceConfig_Role.CLIENT_BASE
-};
-
-/**
- * Map our modem preset strings to Meshtastic ModemPreset enum values
- */
-const MODEM_PRESET_MAP = {
-    'LONG_FAST': Protobuf.Config.Config_LoRaConfig_ModemPreset.LONG_FAST,
-    'LONG_SLOW': Protobuf.Config.Config_LoRaConfig_ModemPreset.LONG_SLOW,
-    'VERY_LONG_SLOW': Protobuf.Config.Config_LoRaConfig_ModemPreset.VERY_LONG_SLOW,
-    'MEDIUM_SLOW': Protobuf.Config.Config_LoRaConfig_ModemPreset.MEDIUM_SLOW,
-    'MEDIUM_FAST': Protobuf.Config.Config_LoRaConfig_ModemPreset.MEDIUM_FAST,
-    'SHORT_SLOW': Protobuf.Config.Config_LoRaConfig_ModemPreset.SHORT_SLOW,
-    'SHORT_FAST': Protobuf.Config.Config_LoRaConfig_ModemPreset.SHORT_FAST,
-    'LONG_MODERATE': Protobuf.Config.Config_LoRaConfig_ModemPreset.LONG_MODERATE
-};
+import { REGION_MAP, ROLE_MAP, MODEM_PRESET_MAP, GPS_FORMAT_MAP, UNITS_MAP, OLED_TYPE_MAP, DISPLAY_MODE_MAP, ADDRESS_MODE_MAP, BLUETOOTH_MODE_MAP, mapEnum } from './utils/EnumMapper.js';
+import { copyFields, mapConfigFields } from './utils/ConfigMapper.js';
 
 /**
  * Encode a single Config message as ToRadio binary
  * @param {Object} config - Config object with fields like region, role, modemPreset, hopLimit
+ * @param {string} [config.region] - LoRa region code (e.g., 'US', 'EU_868')
+ * @param {string} [config.role] - Device role (e.g., 'ROUTER', 'CLIENT')
+ * @param {string} [config.modemPreset] - Modem preset (e.g., 'LONG_FAST')
+ * @param {number} [config.hopLimit] - Hop limit (1-7)
  * @returns {Uint8Array} Binary protobuf ToRadio message
+ * @throws {Error} If config is invalid or missing required fields
  */
 export function encodeConfigToProtobuf(config) {
     if (!config || typeof config !== 'object') {
@@ -218,30 +170,15 @@ export function encodeMultipleConfigsToProtobuf(config) {
     
     // LoRa config (region, modemPreset, hopLimit, txPower)
     if (config.region || config.modemPreset || config.hopLimit !== undefined || config.txPower !== undefined) {
+        // Pass raw values - encodeLoRaConfig will handle enum mapping
         const loraConfig = {};
-        if (config.region) {
-            const regionCode = REGION_MAP[config.region];
-            if (regionCode !== undefined) {
-                loraConfig.region = regionCode;
-            }
-        }
-        if (config.modemPreset) {
-            const preset = MODEM_PRESET_MAP[config.modemPreset];
-            if (preset !== undefined) {
-                loraConfig.modemPreset = preset;
-            }
-        }
-        if (config.hopLimit !== undefined) {
-            loraConfig.hopLimit = config.hopLimit;
-        }
-        if (config.txPower !== undefined) {
-            loraConfig.txPower = config.txPower;
-        }
+        if (config.region !== undefined) loraConfig.region = config.region;
+        if (config.modemPreset !== undefined) loraConfig.modemPreset = config.modemPreset;
+        if (config.hopLimit !== undefined) loraConfig.hopLimit = config.hopLimit;
+        if (config.txPower !== undefined) loraConfig.txPower = config.txPower;
         
-        if (Object.keys(loraConfig).length > 0) {
-            const msg = encodeLoRaConfig(loraConfig);
-            if (msg) messages.push(msg);
-        }
+        const msg = encodeLoRaConfig(loraConfig);
+        if (msg) messages.push(msg);
     }
     
     // Device config (role)
@@ -251,6 +188,55 @@ export function encodeMultipleConfigsToProtobuf(config) {
     }
     
     return messages;
+}
+
+/**
+ * Generic config encoder helper
+ * @param {Object} inputConfig - Input config object
+ * @param {Object} schema - Protobuf schema
+ * @param {string} caseName - ConfigSchema case name
+ * @param {Object} enumMappings - Enum mappings { field: enumMap }
+ * @returns {Uint8Array|null} Encoded config or null if empty
+ */
+function encodeConfigGeneric(inputConfig, schema, caseName, enumMappings = {}) {
+    const config = {};
+    
+    // Copy all fields, applying enum mappings where needed
+    for (const [key, value] of Object.entries(inputConfig)) {
+        // Allow 0 and false values (they're valid)
+        if (value === undefined || value === null) continue;
+        
+        if (enumMappings[key]) {
+            const enumValue = mapEnum(value, enumMappings[key], key);
+            // mapEnum can return 0, which is valid, so check !== undefined
+            if (enumValue !== undefined) {
+                config[key] = enumValue;
+            }
+        } else {
+            config[key] = value;
+        }
+    }
+    
+    if (Object.keys(config).length === 0) return null;
+    
+    // Handle module configs that might not have schemas - create directly
+    // For module configs, schema might be undefined, so we create the config object directly
+    let configValue;
+    if (schema) {
+        configValue = create(schema, config);
+    } else {
+        // Fallback: create plain object (for module configs without schemas)
+        configValue = config;
+    }
+    
+    const configMessage = create(Protobuf.Config.ConfigSchema, {
+        payloadVariant: {
+            case: caseName,
+            value: configValue
+        }
+    });
+    
+    return wrapConfigInToRadio(configMessage);
 }
 
 /**
@@ -289,373 +275,220 @@ function wrapConfigInToRadio(configMessage) {
  * Encode LoRa Config
  */
 export function encodeLoRaConfig(loraConfig) {
-    const config = {};
-    
-    if (loraConfig.region) {
-        const regionCode = REGION_MAP[loraConfig.region];
-        if (regionCode !== undefined) config.region = regionCode;
-    }
-    
-    if (loraConfig.modemPreset) {
-        const preset = MODEM_PRESET_MAP[loraConfig.modemPreset];
-        if (preset !== undefined) config.modemPreset = preset;
-    }
-    
-    if (loraConfig.hopLimit !== undefined) config.hopLimit = loraConfig.hopLimit;
-    if (loraConfig.txPower !== undefined) config.txPower = loraConfig.txPower;
-    if (loraConfig.txEnabled !== undefined) config.txEnabled = loraConfig.txEnabled;
-    if (loraConfig.bandwidth !== undefined) config.bandwidth = loraConfig.bandwidth;
-    if (loraConfig.spreadFactor !== undefined) config.spreadFactor = loraConfig.spreadFactor;
-    if (loraConfig.codingRate !== undefined) config.codingRate = loraConfig.codingRate;
-    if (loraConfig.frequencyOffset !== undefined) config.frequencyOffset = loraConfig.frequencyOffset;
-    if (loraConfig.channelNum !== undefined) config.channelNum = loraConfig.channelNum;
-    
-    if (Object.keys(config).length === 0) return null;
-    
-    const configMessage = create(Protobuf.Config.ConfigSchema, {
-        payloadVariant: {
-            case: "lora",
-            value: create(Protobuf.Config.Config_LoRaConfigSchema, config)
+    return encodeConfigGeneric(
+        loraConfig,
+        Protobuf.Config.Config_LoRaConfigSchema,
+        'lora',
+        {
+            region: REGION_MAP,
+            modemPreset: MODEM_PRESET_MAP
         }
-    });
-    
-    return wrapConfigInToRadio(configMessage);
+    );
 }
 
 /**
  * Encode Device Config
  */
 export function encodeDeviceConfig(deviceConfig) {
-    const config = {};
+    const REBROADCAST_MODE_MAP = {
+        'ALL': Protobuf.Config.Config_DeviceConfig_RebroadcastMode?.ALL,
+        'ALL_SKIP_DC': Protobuf.Config.Config_DeviceConfig_RebroadcastMode?.ALL_SKIP_DC,
+        'LOCAL_ONLY': Protobuf.Config.Config_DeviceConfig_RebroadcastMode?.LOCAL_ONLY
+    };
     
-    if (deviceConfig.role) {
-        const roleCode = ROLE_MAP[deviceConfig.role];
-        if (roleCode !== undefined) config.role = roleCode;
-    }
-    
-    if (deviceConfig.serialEnabled !== undefined) config.serialEnabled = deviceConfig.serialEnabled;
-    if (deviceConfig.debugLogEnabled !== undefined) config.debugLogEnabled = deviceConfig.debugLogEnabled;
-    if (deviceConfig.buttonGpio !== undefined) config.buttonGpio = deviceConfig.buttonGpio;
-    if (deviceConfig.buzzerGpio !== undefined) config.buzzerGpio = deviceConfig.buzzerGpio;
-    if (deviceConfig.rebroadcastMode !== undefined) config.rebroadcastMode = deviceConfig.rebroadcastMode;
-    if (deviceConfig.nodeInfoBroadcastSecs !== undefined) config.nodeInfoBroadcastSecs = deviceConfig.nodeInfoBroadcastSecs;
-    if (deviceConfig.doubleTapAsButtonPress !== undefined) config.doubleTapAsButtonPress = deviceConfig.doubleTapAsButtonPress;
-    if (deviceConfig.isManaged !== undefined) config.isManaged = deviceConfig.isManaged;
-    if (deviceConfig.disableTripleClick !== undefined) config.disableTripleClick = deviceConfig.disableTripleClick;
-    
-    if (Object.keys(config).length === 0) return null;
-    
-    const configMessage = create(Protobuf.Config.ConfigSchema, {
-        payloadVariant: {
-            case: "device",
-            value: create(Protobuf.Config.Config_DeviceConfigSchema, config)
+    return encodeConfigGeneric(
+        deviceConfig,
+        Protobuf.Config.Config_DeviceConfigSchema,
+        'device',
+        {
+            role: ROLE_MAP,
+            rebroadcastMode: REBROADCAST_MODE_MAP
         }
-    });
-    
-    return wrapConfigInToRadio(configMessage);
+    );
 }
 
 /**
  * Encode Display Config
  */
 export function encodeDisplayConfig(displayConfig) {
-    const config = {};
-    
-    if (displayConfig.screenOnSecs !== undefined) config.screenOnSecs = displayConfig.screenOnSecs;
-    if (displayConfig.gpsFormat !== undefined) config.gpsFormat = displayConfig.gpsFormat;
-    if (displayConfig.autoScreenCarouselSecs !== undefined) config.autoScreenCarouselSecs = displayConfig.autoScreenCarouselSecs;
-    if (displayConfig.compassNorthTop !== undefined) config.compassNorthTop = displayConfig.compassNorthTop;
-    if (displayConfig.flipScreen !== undefined) config.flipScreen = displayConfig.flipScreen;
-    if (displayConfig.units !== undefined) config.units = displayConfig.units;
-    if (displayConfig.oledType !== undefined) config.oledType = displayConfig.oledType;
-    if (displayConfig.displayMode !== undefined) config.displayMode = displayConfig.displayMode;
-    if (displayConfig.headingBollard !== undefined) config.headingBollard = displayConfig.headingBollard;
-    if (displayConfig.wakeOnTapOrMotion !== undefined) config.wakeOnTapOrMotion = displayConfig.wakeOnTapOrMotion;
-    
-    if (Object.keys(config).length === 0) return null;
-    
-    const configMessage = create(Protobuf.Config.ConfigSchema, {
-        payloadVariant: {
-            case: "display",
-            value: create(Protobuf.Config.Config_DisplayConfigSchema, config)
+    return encodeConfigGeneric(
+        displayConfig,
+        Protobuf.Config.Config_DisplayConfigSchema,
+        'display',
+        {
+            gpsFormat: GPS_FORMAT_MAP,
+            units: UNITS_MAP,
+            oledType: OLED_TYPE_MAP,
+            displayMode: DISPLAY_MODE_MAP
         }
-    });
-    
-    return wrapConfigInToRadio(configMessage);
+    );
 }
 
 /**
  * Encode Network Config
  */
 export function encodeNetworkConfig(networkConfig) {
-    const config = {};
-    
-    if (networkConfig.wifiEnabled !== undefined) config.wifiEnabled = networkConfig.wifiEnabled;
-    if (networkConfig.wifiSsid) config.wifiSsid = networkConfig.wifiSsid;
-    if (networkConfig.wifiPsk) config.wifiPsk = networkConfig.wifiPsk;
-    if (networkConfig.ntpServer) config.ntpServer = networkConfig.ntpServer;
-    if (networkConfig.addressMode !== undefined) config.addressMode = networkConfig.addressMode;
-    if (networkConfig.ip) config.ip = networkConfig.ip;
-    if (networkConfig.gateway) config.gateway = networkConfig.gateway;
-    if (networkConfig.subnet) config.subnet = networkConfig.subnet;
-    if (networkConfig.dnsServer) config.dnsServer = networkConfig.dnsServer;
-    
-    if (Object.keys(config).length === 0) return null;
-    
-    const configMessage = create(Protobuf.Config.ConfigSchema, {
-        payloadVariant: {
-            case: "network",
-            value: create(Protobuf.Config.Config_NetworkConfigSchema, config)
+    return encodeConfigGeneric(
+        networkConfig,
+        Protobuf.Config.Config_NetworkConfigSchema,
+        'network',
+        {
+            addressMode: ADDRESS_MODE_MAP
         }
-    });
-    
-    return wrapConfigInToRadio(configMessage);
+    );
 }
 
 /**
  * Encode Bluetooth Config
  */
 export function encodeBluetoothConfig(bluetoothConfig) {
-    const config = {};
-    
-    if (bluetoothConfig.enabled !== undefined) config.enabled = bluetoothConfig.enabled;
-    if (bluetoothConfig.pairingPin !== undefined) config.pairingPin = bluetoothConfig.pairingPin;
-    if (bluetoothConfig.fixedPin !== undefined) config.fixedPin = bluetoothConfig.fixedPin;
-    if (bluetoothConfig.mode !== undefined) config.mode = bluetoothConfig.mode;
-    
-    if (Object.keys(config).length === 0) return null;
-    
-    const configMessage = create(Protobuf.Config.ConfigSchema, {
-        payloadVariant: {
-            case: "bluetooth",
-            value: create(Protobuf.Config.Config_BluetoothConfigSchema, config)
+    return encodeConfigGeneric(
+        bluetoothConfig,
+        Protobuf.Config.Config_BluetoothConfigSchema,
+        'bluetooth',
+        {
+            mode: BLUETOOTH_MODE_MAP
         }
-    });
-    
-    return wrapConfigInToRadio(configMessage);
+    );
 }
 
 /**
  * Encode Position Config
  */
 export function encodePositionConfig(positionConfig) {
-    const config = {};
-    
-    if (positionConfig.positionBroadcastSmartEnabled !== undefined) config.positionBroadcastSmartEnabled = positionConfig.positionBroadcastSmartEnabled;
-    if (positionConfig.positionBroadcastSecs !== undefined) config.positionBroadcastSecs = positionConfig.positionBroadcastSecs;
-    if (positionConfig.fixedPosition !== undefined) config.fixedPosition = positionConfig.fixedPosition;
-    if (positionConfig.gpsEnabled !== undefined) config.gpsEnabled = positionConfig.gpsEnabled;
-    if (positionConfig.gpsUpdateInterval !== undefined) config.gpsUpdateInterval = positionConfig.gpsUpdateInterval;
-    if (positionConfig.gpsAttemptTime !== undefined) config.gpsAttemptTime = positionConfig.gpsAttemptTime;
-    if (positionConfig.positionFlags !== undefined) config.positionFlags = positionConfig.positionFlags;
-    
-    if (Object.keys(config).length === 0) return null;
-    
-    const configMessage = create(Protobuf.Config.ConfigSchema, {
-        payloadVariant: {
-            case: "position",
-            value: create(Protobuf.Config.Config_PositionConfigSchema, config)
-        }
-    });
-    
-    return wrapConfigInToRadio(configMessage);
+    return encodeConfigGeneric(
+        positionConfig,
+        Protobuf.Config.Config_PositionConfigSchema,
+        'position'
+    );
 }
 
 /**
  * Encode Power Config
+ * @param {Object} powerConfig - Power configuration object
+ * @param {boolean} [powerConfig.isPowerSaving] - Power saving enabled flag
+ * @param {number} [powerConfig.onBatteryShutdownAfterSecs] - Battery shutdown timeout
+ * @param {number} [powerConfig.adcMultiplierOverride] - ADC multiplier override
+ * @param {number} [powerConfig.numSeconds] - Number of seconds
+ * @param {number} [powerConfig.waitBluetoothSecs] - Wait for Bluetooth timeout
+ * @returns {Uint8Array|null} Encoded config or null if empty
  */
 export function encodePowerConfig(powerConfig) {
-    const config = {};
-    
-    if (powerConfig.isPowerSaving !== undefined) config.isPowerSaving = powerConfig.isPowerSaving;
-    if (powerConfig.onBatteryShutdownAfterSecs !== undefined) config.onBatteryShutdownAfterSecs = powerConfig.onBatteryShutdownAfterSecs;
-    if (powerConfig.adcMultiplierOverride !== undefined) config.adcMultiplierOverride = powerConfig.adcMultiplierOverride;
-    if (powerConfig.numSeconds !== undefined) config.numSeconds = powerConfig.numSeconds;
-    if (powerConfig.waitBluetoothSecs !== undefined) config.waitBluetoothSecs = powerConfig.waitBluetoothSecs;
-    
-    if (Object.keys(config).length === 0) return null;
-    
-    const configMessage = create(Protobuf.Config.ConfigSchema, {
-        payloadVariant: {
-            case: "power",
-            value: create(Protobuf.Config.Config_PowerConfigSchema, config)
-        }
-    });
-    
-    return wrapConfigInToRadio(configMessage);
+    return encodeConfigGeneric(
+        powerConfig,
+        Protobuf.Config.Config_PowerConfigSchema,
+        'power'
+    );
 }
 
 /**
+ * Module Config Registry
+ * Maps module names to their schemas and case names
+ * Adding new modules is as simple as adding an entry here
+ */
+const MODULE_REGISTRY = {
+    telemetry: {
+        schema: Protobuf.Config.Config_TelemetryConfigSchema,
+        caseName: 'telemetry',
+        enumMappings: {}
+    },
+    serial: {
+        schema: Protobuf.Config.Config_SerialConfigSchema,
+        caseName: 'serial',
+        enumMappings: {}
+    },
+    externalNotification: {
+        schema: Protobuf.Config.Config_ExternalNotificationConfigSchema,
+        caseName: 'externalNotification',
+        enumMappings: {}
+    },
+    storeForward: {
+        schema: Protobuf.Config.Config_StoreForwardConfigSchema,
+        caseName: 'storeForward',
+        enumMappings: {}
+    },
+    rangeTest: {
+        schema: Protobuf.Config.Config_RangeTestConfigSchema,
+        caseName: 'rangeTest',
+        enumMappings: {}
+    },
+    cannedMessage: {
+        schema: Protobuf.Config.Config_CannedMessageConfigSchema,
+        caseName: 'cannedMessage',
+        enumMappings: {
+            allowInputSource: {
+                'KEYBOARD': Protobuf.Config.Config_CannedMessageConfig_InputSourceChar?.KEYBOARD,
+                'ZPSK': Protobuf.Config.Config_CannedMessageConfig_InputSourceChar?.ZPSK
+            }
+        }
+    },
+    audio: {
+        schema: Protobuf.Config.Config_AudioConfigSchema,
+        caseName: 'audio',
+        enumMappings: {}
+    },
+    ambientLighting: {
+        schema: Protobuf.Config.Config_AmbientLightingConfigSchema,
+        caseName: 'ambientLighting',
+        enumMappings: {}
+    },
+    detectionSensor: {
+        schema: Protobuf.Config.Config_DetectionSensorConfigSchema,
+        caseName: 'detectionSensor',
+        enumMappings: {}
+    },
+    paxcounter: {
+        schema: Protobuf.Config.Config_PaxcounterConfigSchema,
+        caseName: 'paxcounter',
+        enumMappings: {}
+    },
+    telemetryDisplay: {
+        schema: Protobuf.Config.Config_TelemetryDisplayConfigSchema,
+        caseName: 'telemetryDisplay',
+        enumMappings: {}
+    }
+};
+
+/**
  * Encode Module Config (Telemetry, Serial, External Notification, etc.)
+ * Simplified using registry pattern - just add new modules to MODULE_REGISTRY
  */
 export function encodeModuleConfig(moduleConfig) {
+    // Find which module type is present
+    const moduleType = Object.keys(moduleConfig).find(key => MODULE_REGISTRY[key]);
+    if (!moduleType) return null;
+    
+    const moduleData = MODULE_REGISTRY[moduleType];
+    if (!moduleData) return null;
+    
+    const moduleConfigData = moduleConfig[moduleType];
+    if (!moduleConfigData || Object.keys(moduleConfigData).length === 0) return null;
+    
+    // Apply enum mappings if any
     const config = {};
-    let moduleType = null;
-    
-    // Telemetry Module
-    if (moduleConfig.telemetry) {
-        moduleType = "telemetry";
-        const telemetry = moduleConfig.telemetry;
-        if (telemetry.deviceUpdateInterval !== undefined) config.deviceUpdateInterval = telemetry.deviceUpdateInterval;
-        if (telemetry.environmentUpdateInterval !== undefined) config.environmentUpdateInterval = telemetry.environmentUpdateInterval;
-        if (telemetry.environmentMeasurementEnabled !== undefined) config.environmentMeasurementEnabled = telemetry.environmentMeasurementEnabled;
-        if (telemetry.environmentScreenEnabled !== undefined) config.environmentScreenEnabled = telemetry.environmentScreenEnabled;
-        if (telemetry.environmentDisplayFahrenheit !== undefined) config.environmentDisplayFahrenheit = telemetry.environmentDisplayFahrenheit;
-        if (telemetry.airQualityEnabled !== undefined) config.airQualityEnabled = telemetry.airQualityEnabled;
-        if (telemetry.airQualityInterval !== undefined) config.airQualityInterval = telemetry.airQualityInterval;
-        if (telemetry.powerMeasurementEnabled !== undefined) config.powerMeasurementEnabled = telemetry.powerMeasurementEnabled;
-        if (telemetry.powerUpdateInterval !== undefined) config.powerUpdateInterval = telemetry.powerUpdateInterval;
-        if (telemetry.powerScreenEnabled !== undefined) config.powerScreenEnabled = telemetry.powerScreenEnabled;
-    }
-    // Serial Module
-    else if (moduleConfig.serial) {
-        moduleType = "serial";
-        const serial = moduleConfig.serial;
-        if (serial.enabled !== undefined) config.enabled = serial.enabled;
-        if (serial.echo !== undefined) config.echo = serial.echo;
-        if (serial.rxd !== undefined) config.rxd = serial.rxd;
-        if (serial.txd !== undefined) config.txd = serial.txd;
-        if (serial.baud !== undefined) config.baud = serial.baud;
-        if (serial.timeout !== undefined) config.timeout = serial.timeout;
-        if (serial.mode !== undefined) config.mode = serial.mode;
-    }
-    // External Notification Module
-    else if (moduleConfig.externalNotification) {
-        moduleType = "externalNotification";
-        const extNotif = moduleConfig.externalNotification;
-        if (extNotif.enabled !== undefined) config.enabled = extNotif.enabled;
-        if (extNotif.output !== undefined) config.output = extNotif.output;
-        if (extNotif.outputMs !== undefined) config.outputMs = extNotif.outputMs;
-        if (extNotif.outputCanBeLp !== undefined) config.outputCanBeLp = extNotif.outputCanBeLp;
-        if (extNotif.ntfLed !== undefined) config.ntfLed = extNotif.ntfLed;
-        if (extNotif.ntfBuzzer !== undefined) config.ntfBuzzer = extNotif.ntfBuzzer;
-        if (extNotif.ntfVibrate !== undefined) config.ntfVibrate = extNotif.ntfVibrate;
-        if (extNotif.active !== undefined) config.active = extNotif.active;
-        if (extNotif.alertBell !== undefined) config.alertBell = extNotif.alertBell;
-        if (extNotif.alertMessage !== undefined) config.alertMessage = extNotif.alertMessage;
-        if (extNotif.usePwm !== undefined) config.usePwm = extNotif.usePwm;
-        if (extNotif.ntfBellBuzzerAlert !== undefined) config.ntfBellBuzzerAlert = extNotif.ntfBellBuzzerAlert;
-        if (extNotif.ringtone !== undefined) config.ringtone = extNotif.ringtone;
-    }
-    // Store & Forward Module
-    else if (moduleConfig.storeForward) {
-        moduleType = "storeForward";
-        const sf = moduleConfig.storeForward;
-        if (sf.enabled !== undefined) config.enabled = sf.enabled;
-        if (sf.heartbeat !== undefined) config.heartbeat = sf.heartbeat;
-        if (sf.records !== undefined) config.records = sf.records;
-        if (sf.historyReturnMax !== undefined) config.historyReturnMax = sf.historyReturnMax;
-        if (sf.historyReturnWindow !== undefined) config.historyReturnWindow = sf.historyReturnWindow;
-    }
-    // Range Test Module
-    else if (moduleConfig.rangeTest) {
-        moduleType = "rangeTest";
-        const rt = moduleConfig.rangeTest;
-        if (rt.enabled !== undefined) config.enabled = rt.enabled;
-        if (rt.sender !== undefined) config.sender = rt.sender;
-        if (rt.save !== undefined) config.save = rt.save;
-    }
-    // Canned Message Module
-    else if (moduleConfig.cannedMessage) {
-        moduleType = "cannedMessage";
-        const cm = moduleConfig.cannedMessage;
-        if (cm.enabled !== undefined) config.enabled = cm.enabled;
-        if (cm.allowInputSource !== undefined) config.allowInputSource = cm.allowInputSource;
-        if (cm.sendBell !== undefined) config.sendBell = cm.sendBell;
-    }
-    // Audio Module
-    else if (moduleConfig.audio) {
-        moduleType = "audio";
-        const audio = moduleConfig.audio;
-        if (audio.codec2Enabled !== undefined) config.codec2Enabled = audio.codec2Enabled;
-        if (audio.pttPin !== undefined) config.pttPin = audio.pttPin;
-        if (audio.bitrate !== undefined) config.bitrate = audio.bitrate;
-        if (audio.i2sWs !== undefined) config.i2sWs = audio.i2sWs;
-        if (audio.i2sSd !== undefined) config.i2sSd = audio.i2sSd;
-        if (audio.i2sDin !== undefined) config.i2sDin = audio.i2sDin;
-        if (audio.i2sSck !== undefined) config.i2sSck = audio.i2sSck;
-        if (audio.i2sBck !== undefined) config.i2sBck = audio.i2sBck;
-    }
-    // Ambient Lighting Module
-    else if (moduleConfig.ambientLighting) {
-        moduleType = "ambientLighting";
-        const al = moduleConfig.ambientLighting;
-        if (al.ledState !== undefined) config.ledState = al.ledState;
-        if (al.current !== undefined) config.current = al.current;
-        if (al.red !== undefined) config.red = al.red;
-        if (al.green !== undefined) config.green = al.green;
-        if (al.blue !== undefined) config.blue = al.blue;
-    }
-    // Detection Sensor Module
-    else if (moduleConfig.detectionSensor) {
-        moduleType = "detectionSensor";
-        const ds = moduleConfig.detectionSensor;
-        if (ds.enabled !== undefined) config.enabled = ds.enabled;
-        if (ds.minimumBroadcastSecs !== undefined) config.minimumBroadcastSecs = ds.minimumBroadcastSecs;
-        if (ds.stateBroadcastEnabled !== undefined) config.stateBroadcastEnabled = ds.stateBroadcastEnabled;
-    }
-    // Paxcounter Module
-    else if (moduleConfig.paxcounter) {
-        moduleType = "paxcounter";
-        const pc = moduleConfig.paxcounter;
-        if (pc.enabled !== undefined) config.enabled = pc.enabled;
-        if (pc.wifiEnabled !== undefined) config.wifiEnabled = pc.wifiEnabled;
-        if (pc.bleEnabled !== undefined) config.bleEnabled = pc.bleEnabled;
-        if (pc.updateInterval !== undefined) config.updateInterval = pc.updateInterval;
-        if (pc.pincounterEnabled !== undefined) config.pincounterEnabled = pc.pincounterEnabled;
-    }
-    // Telemetry Display Module
-    else if (moduleConfig.telemetryDisplay) {
-        moduleType = "telemetryDisplay";
-        const td = moduleConfig.telemetryDisplay;
-        if (td.telemetryDisplayEnabled !== undefined) config.telemetryDisplayEnabled = td.telemetryDisplayEnabled;
-        if (td.telemetryDisplayScreenTime !== undefined) config.telemetryDisplayScreenTime = td.telemetryDisplayScreenTime;
-        if (td.telemetryDisplayOnTime !== undefined) config.telemetryDisplayOnTime = td.telemetryDisplayOnTime;
-        if (td.telemetryDisplayFramesPerSecond !== undefined) config.telemetryDisplayFramesPerSecond = td.telemetryDisplayFramesPerSecond;
+    for (const [key, value] of Object.entries(moduleConfigData)) {
+        if (value === undefined || value === null) continue;
+        
+        if (moduleData.enumMappings[key]) {
+            const enumValue = mapEnum(value, moduleData.enumMappings[key], key);
+            if (enumValue !== undefined) {
+                config[key] = enumValue;
+            }
+        } else {
+            config[key] = value;
+        }
     }
     
-    if (!moduleType || Object.keys(config).length === 0) return null;
+    if (Object.keys(config).length === 0) return null;
     
-    // Map module type to protobuf schema case name
-    const moduleCaseMap = {
-        "telemetry": "telemetry",
-        "serial": "serial",
-        "externalNotification": "externalNotification",
-        "storeForward": "storeForward",
-        "rangeTest": "rangeTest",
-        "cannedMessage": "cannedMessage",
-        "audio": "audio",
-        "ambientLighting": "ambientLighting",
-        "detectionSensor": "detectionSensor",
-        "paxcounter": "paxcounter",
-        "telemetryDisplay": "telemetryDisplay"
-    };
-    
-    const caseName = moduleCaseMap[moduleType];
-    if (!caseName) return null;
-    
-    // Get the appropriate schema
-    const schemaMap = {
-        "telemetry": Protobuf.Config.Config_TelemetryConfigSchema,
-        "serial": Protobuf.Config.Config_SerialConfigSchema,
-        "externalNotification": Protobuf.Config.Config_ExternalNotificationConfigSchema,
-        "storeForward": Protobuf.Config.Config_StoreForwardConfigSchema,
-        "rangeTest": Protobuf.Config.Config_RangeTestConfigSchema,
-        "cannedMessage": Protobuf.Config.Config_CannedMessageConfigSchema,
-        "audio": Protobuf.Config.Config_AudioConfigSchema,
-        "ambientLighting": Protobuf.Config.Config_AmbientLightingConfigSchema,
-        "detectionSensor": Protobuf.Config.Config_DetectionSensorConfigSchema,
-        "paxcounter": Protobuf.Config.Config_PaxcounterConfigSchema,
-        "telemetryDisplay": Protobuf.Config.Config_TelemetryDisplayConfigSchema
-    };
-    
-    const schema = schemaMap[moduleType];
-    if (!schema) return null;
+    // Module configs: schema might not exist, so create config directly
+    // The ConfigSchema will handle the case name
+    const configValue = moduleData.schema ? create(moduleData.schema, config) : config;
     
     const configMessage = create(Protobuf.Config.ConfigSchema, {
         payloadVariant: {
-            case: caseName,
-            value: create(schema, config)
+            case: moduleData.caseName,
+            value: configValue
         }
     });
     

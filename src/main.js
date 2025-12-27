@@ -2,6 +2,7 @@ import { BatchManager } from './BatchManager.js';
 import { renderSNRChart, renderAirUtilChart } from './ChartRenderer.js';
 import { startTelemetryUpdates } from './TelemetrySimulator.js';
 import { PacketRain } from './PacketRain.js';
+import { createModal, showPrompt, showConfirm, getElement, getValue } from './utils/DOMHelpers.js';
 
 const manager = new BatchManager();
 
@@ -44,7 +45,15 @@ const BOARD_DEFINITIONS = [
 let currentVendorFilter = 'all';
 let currentChipFilter = 'all';
 
+/**
+ * @fileoverview Main UI controller for Batchtastic Pro
+ * Handles device management, configuration, and firmware flashing UI
+ */
+
 // Board Selector Modal Functions
+/**
+ * Open the board selector modal
+ */
 window.openBoardSelector = function() {
     const modal = document.getElementById('boardSelectorModal');
     if (modal) {
@@ -53,6 +62,9 @@ window.openBoardSelector = function() {
     }
 };
 
+/**
+ * Close the board selector modal
+ */
 window.closeBoardSelector = function() {
     const modal = document.getElementById('boardSelectorModal');
     if (modal) {
@@ -60,6 +72,10 @@ window.closeBoardSelector = function() {
     }
 };
 
+/**
+ * Filter boards by vendor
+ * @param {string} vendor - Vendor name to filter by ('all' for all vendors)
+ */
 window.filterBoards = function(vendor) {
     currentVendorFilter = vendor;
     document.querySelectorAll('.filter-btn[data-filter]').forEach(btn => {
@@ -69,6 +85,10 @@ window.filterBoards = function(vendor) {
     renderBoardGrid();
 };
 
+/**
+ * Filter boards by chip type
+ * @param {string} chip - Chip type to filter by ('all' for all chips)
+ */
 window.filterChips = function(chip) {
     currentChipFilter = chip;
     document.querySelectorAll('.filter-btn[data-chip]').forEach(btn => {
@@ -106,6 +126,10 @@ function renderBoardGrid() {
     `).join('');
 }
 
+/**
+ * Select a board type and prompt for device configuration
+ * @param {string} boardId - Board ID from BOARD_DEFINITIONS
+ */
 window.selectBoard = async function(boardId) {
     const board = BOARD_DEFINITIONS.find(b => b.id === boardId);
     if (!board) return;
@@ -122,40 +146,157 @@ window.selectBoard = async function(boardId) {
     render();
 };
 
+/**
+ * Prompt user to select connection type (USB or BLE)
+ * @returns {Promise<string|null>} Connection type ('usb' or 'ble') or null if cancelled
+ */
 async function promptConnectionType() {
     return new Promise((resolve) => {
-        const choice = confirm('Connect via USB?\n\nOK = USB\nCancel = BLE');
-        resolve(choice ? 'usb' : 'ble');
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.style.display = 'flex';
+        
+        const closeModal = (result) => {
+            modal.remove();
+            resolve(result);
+        };
+        
+        modal.innerHTML = `
+            <div class="modal-content" style="max-width: 400px;">
+                <div class="modal-header">
+                    <h2>Connection Type</h2>
+                    <button class="modal-close" id="connectionCloseBtn">✕</button>
+                </div>
+                <div class="modal-body">
+                    <p style="margin-bottom: 1rem;">How would you like to connect this device?</p>
+                    <button class="btn btn-primary" id="connectionUsbBtn" style="width: 100%; margin-bottom: 0.5rem;">🔌 USB (Serial)</button>
+                    <button class="btn btn-primary" id="connectionBleBtn" style="width: 100%;">📶 Bluetooth (BLE)</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        
+        // Attach event listeners
+        modal.querySelector('#connectionCloseBtn').addEventListener('click', () => closeModal(null));
+        modal.querySelector('#connectionUsbBtn').addEventListener('click', () => closeModal('usb'));
+        modal.querySelector('#connectionBleBtn').addEventListener('click', () => closeModal('ble'));
+        
+        // Close on overlay click
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                closeModal(null);
+            }
+        });
     });
 }
 
 // Configuration prompt for new device placeholder
 async function promptDeviceConfig(board) {
     return new Promise((resolve) => {
-        // Create a modal for device configuration
-        const modal = document.createElement('div');
-        modal.className = 'modal-overlay';
-        modal.style.display = 'flex';
+        // First, prompt for device name using a modal
+        const nameModal = document.createElement('div');
+        nameModal.className = 'modal-overlay';
+        nameModal.style.display = 'flex';
+        let deviceName = null;
+        let configResolved = false;
         
-        const deviceName = prompt(`Enter device name for ${board.name}:`, `NODE-${board.name.toUpperCase()}`);
-        if (!deviceName) {
+        const continueToConfig = () => {
+            const input = nameModal.querySelector('#deviceNameInput');
+            const name = input?.value.trim();
+            if (!name) return;
+            
+            deviceName = name;
+            nameModal.remove();
+            showConfigModal();
+        };
+        
+        nameModal.innerHTML = `
+            <div class="modal-content" style="max-width: 400px;">
+                <div class="modal-header">
+                    <h2>Device Name</h2>
+                    <button class="modal-close" id="nameModalCloseBtn">✕</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Enter device name for ${board.name}:</label>
+                        <input type="text" id="deviceNameInput" value="NODE-${board.name.toUpperCase()}" style="width: 100%; padding: 0.5rem; margin-top: 0.5rem;">
+                    </div>
+                    <button class="btn btn-primary" id="nameModalContinueBtn" style="width: 100%; margin-top: 1rem;">Continue</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(nameModal);
+        
+        nameModal.querySelector('#nameModalCloseBtn').addEventListener('click', () => {
+            nameModal.remove();
             resolve(null);
-            return;
-        }
-
-        // Use the existing config panel modal but customize it
-        const configModal = document.getElementById('configPanelModal');
-        if (configModal) {
+        });
+        
+        nameModal.querySelector('#nameModalContinueBtn').addEventListener('click', continueToConfig);
+        
+        nameModal.addEventListener('click', (e) => {
+            if (e.target === nameModal) {
+                nameModal.remove();
+                resolve(null);
+            }
+        });
+        
+        // Focus input and handle Enter key
+        setTimeout(() => {
+            const input = nameModal.querySelector('#deviceNameInput');
+            if (input) {
+                input.focus();
+                input.select();
+                input.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        continueToConfig();
+                    }
+                });
+            }
+        }, 100);
+        
+        const showConfigModal = () => {
+            const configModal = document.getElementById('configPanelModal');
+            if (!configModal) {
+                // Fallback: resolve with minimal config
+                resolve({
+                    deviceName: deviceName,
+                    region: 'US',
+                    channelName: 'LongFast',
+                    role: 'ROUTER'
+                });
+                return;
+            }
+            
             // Update modal title
             const header = configModal.querySelector('.modal-header h2');
-            if (header) header.textContent = `Configure ${board.name}`;
+            if (header) header.textContent = `Configure ${board.name} - ${deviceName}`;
+            
+            // Reset form to defaults
+            const regionEl = document.getElementById('region');
+            if (regionEl) regionEl.value = 'US';
+            const channelEl = document.getElementById('channelName');
+            if (channelEl) channelEl.value = 'LongFast';
+            const roleEl = document.getElementById('nodeRole');
+            if (roleEl) roleEl.value = 'ROUTER';
+            
+            // Switch to basic tab
+            switchConfigTab('basic');
             
             // Show modal
             configModal.style.display = 'flex';
             
             // Create a wrapper function to handle the config submission
             const originalApply = window.applyConfigToAll;
+            const cleanup = () => {
+                window.applyConfigToAll = originalApply;
+                configModal.style.display = 'none';
+                configModal.removeEventListener('click', overlayClickHandler);
+            };
+            
             window.applyConfigToAll = async function() {
+                if (configResolved) return;
+                
                 const region = document.getElementById('region')?.value;
                 const channelName = document.getElementById('channelName')?.value;
                 const nodeRole = document.getElementById('nodeRole')?.value;
@@ -179,13 +320,8 @@ async function promptDeviceConfig(board) {
                 if (txPower) config.txPower = parseInt(txPower, 10);
                 if (hopLimit) config.hopLimit = parseInt(hopLimit, 10);
 
-                // Restore original function
-                window.applyConfigToAll = originalApply;
-                
-                // Close modal
-                configModal.style.display = 'none';
-                
-                // Resolve with config
+                cleanup();
+                configResolved = true;
                 resolve(config);
             };
             
@@ -193,42 +329,21 @@ async function promptDeviceConfig(board) {
             const closeBtn = configModal.querySelector('.modal-close');
             const originalClose = closeBtn.onclick;
             closeBtn.onclick = function() {
-                window.applyConfigToAll = originalApply;
-                configModal.style.display = 'none';
+                cleanup();
+                configResolved = true;
                 resolve(null);
             };
             
             // Close on overlay click
-            configModal.onclick = function(e) {
+            const overlayClickHandler = function(e) {
                 if (e.target === configModal) {
-                    window.applyConfigToAll = originalApply;
-                    configModal.style.display = 'none';
+                    cleanup();
+                    configResolved = true;
                     resolve(null);
                 }
             };
-        } else {
-            // Fallback: use simple prompts
-            const region = prompt('Deployment Region (e.g., US, EU_868):', 'US');
-            if (!region) {
-                resolve(null);
-                return;
-            }
-            
-            const channelName = prompt('Primary Channel (e.g., LongFast):', 'LongFast');
-            if (!channelName) {
-                resolve(null);
-                return;
-            }
-            
-            const role = prompt('Node Role (e.g., ROUTER, CLIENT):', 'ROUTER') || 'ROUTER';
-            
-            resolve({
-                deviceName: deviceName,
-                region: region,
-                channelName: channelName,
-                role: role
-            });
-        }
+            configModal.addEventListener('click', overlayClickHandler);
+        };
     });
 }
 
@@ -346,7 +461,9 @@ window.applyConfigToAll = async function() {
     }
 };
 
-// Flash All Function
+/**
+ * Flash all selected devices with firmware
+ */
 window.flashAllDevices = async function() {
     if (manager.isFlashing) return;
 
@@ -729,20 +846,26 @@ window.saveCurrentAsTemplate = function() {
     }
 };
 
-window.addPendingDevice = function(templateId) {
+window.addPendingDevice = async function(templateId) {
     const template = manager.getTemplate(templateId);
     if (!template) return;
     
-    const customName = prompt(`Enter device name (or leave blank for "${template.deviceName}"):`, template.deviceName);
-    if (customName === null) return; // User cancelled
+    const inputId = 'templateDeviceNameInput_' + Date.now();
+    const name = await showPrompt(
+        `Enter device name (or leave blank for "${template.deviceName}"):`,
+        template.deviceName
+    );
     
-    manager.addPendingDevice(templateId, customName || template.deviceName);
-    renderTemplates();
-    render();
+    if (name !== null) {
+        manager.addPendingDevice(templateId, name || template.deviceName);
+        renderTemplates();
+        render();
+    }
 };
 
-window.deleteTemplate = function(templateId) {
-    if (!confirm('Delete this template?')) return;
+window.deleteTemplate = async function(templateId) {
+    const confirmed = await showConfirm('Delete this template?');
+    if (!confirmed) return;
     manager.deleteTemplate(templateId);
     renderTemplates();
     render();
@@ -754,13 +877,13 @@ window.removePendingDevice = function(pendingId) {
     render();
 };
 
-window.renameDevice = function(deviceId) {
+window.renameDevice = async function(deviceId) {
     const device = manager.devices.find(d => d.id === deviceId);
     if (!device) return;
     
-    const newName = prompt(`Rename device "${device.name}":`, device.name);
-    if (newName && newName.trim()) {
-        manager.renameDevice(deviceId, newName.trim());
+    const newName = await showPrompt('Device name:', device.name);
+    if (newName) {
+        manager.renameDevice(deviceId, newName);
         render();
     }
 };

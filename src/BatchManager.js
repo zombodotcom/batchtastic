@@ -2,6 +2,8 @@ import { BLETransport } from './BLETransport.js';
 import { OTAHandler } from './OTAHandler.js';
 import { BlobReader, ZipReader, BlobWriter } from '@zip.js/zip.js';
 import { encodeConfigToProtobuf, encodeMultipleConfigsToProtobuf, encodeBeginEditSettings, encodeFullConfig } from './ProtobufEncoder.js';
+import { getStorage, setStorage, removeStorage } from './utils/Storage.js';
+import { logToDevice, logToGlobal, createLogEntry } from './utils/Logger.js';
 
 /**
  * Convert ArrayBuffer to binary string (required by esptool-js)
@@ -46,36 +48,37 @@ export class BatchManager {
         this.selectedRelease = null;
         this.baudRate = 115200;
         this.selectedDevices = new Set(); // Set of device IDs for selection
-        this.deviceTemplates = this._loadTemplates(); // Load saved templates from localStorage
+        this.deviceTemplates = this._loadTemplates(); // Load saved templates from storage
         this.pendingDevices = []; // Devices waiting to be connected (with pre-assigned templates)
     }
 
     /**
-     * Load device templates from localStorage
+     * Load device templates from storage
      */
     _loadTemplates() {
-        try {
-            const stored = localStorage.getItem('batchtastic_templates');
-            return stored ? JSON.parse(stored) : [];
-        } catch (e) {
-            console.warn('Failed to load templates:', e);
-            return [];
-        }
+        return getStorage('batchtastic_templates', []);
     }
 
     /**
-     * Save device templates to localStorage
+     * Save device templates to storage
      */
     _saveTemplates() {
-        try {
-            localStorage.setItem('batchtastic_templates', JSON.stringify(this.deviceTemplates));
-        } catch (e) {
-            console.warn('Failed to save templates:', e);
-        }
+        setStorage('batchtastic_templates', this.deviceTemplates);
     }
 
     /**
      * Create a device template/profile
+     * @param {Object} template - Template configuration
+     * @param {string} template.name - Template name (required)
+     * @param {string} [template.deviceName] - Default device name
+     * @param {string} [template.region] - LoRa region (default: 'US')
+     * @param {string} [template.channelName] - Channel name (default: 'LongFast')
+     * @param {string} [template.role] - Device role (default: 'ROUTER')
+     * @param {string} [template.modemPreset] - Modem preset
+     * @param {number} [template.txPower] - TX power
+     * @param {number} [template.hopLimit] - Hop limit
+     * @returns {Template} Created template object
+     * @throws {Error} If template name is missing
      */
     createTemplate(template) {
         if (!template.name) {
@@ -103,6 +106,7 @@ export class BatchManager {
 
     /**
      * Delete a template
+     * @param {string} templateId - Template ID to delete
      */
     deleteTemplate(templateId) {
         this.deviceTemplates = this.deviceTemplates.filter(t => t.id !== templateId);
@@ -112,6 +116,8 @@ export class BatchManager {
 
     /**
      * Get a template by ID
+     * @param {string} templateId - Template ID
+     * @returns {Template|undefined} Template object or undefined if not found
      */
     getTemplate(templateId) {
         return this.deviceTemplates.find(t => t.id === templateId);
@@ -119,6 +125,10 @@ export class BatchManager {
 
     /**
      * Add a pending device (device that will be connected later with a template)
+     * @param {string} templateId - Template ID to use
+     * @param {string|null} [customName=null] - Custom device name (uses template default if null)
+     * @returns {Object} Pending device object
+     * @throws {Error} If template not found
      */
     addPendingDevice(templateId, customName = null) {
         const template = this.getTemplate(templateId);
@@ -141,6 +151,7 @@ export class BatchManager {
 
     /**
      * Remove a pending device
+     * @param {string} pendingId - Pending device ID to remove
      */
     removePendingDevice(pendingId) {
         this.pendingDevices = this.pendingDevices.filter(p => p.id !== pendingId);
@@ -148,6 +159,9 @@ export class BatchManager {
 
     /**
      * Rename a device
+     * @param {string} deviceId - Device ID
+     * @param {string} newName - New device name
+     * @throws {Error} If device not found
      */
     renameDevice(deviceId, newName) {
         const device = this.devices.find(d => d.id === deviceId);
@@ -162,45 +176,75 @@ export class BatchManager {
     /**
      * Fetch available firmware releases from Meshtastic API
      * Falls back to GitHub API if the Meshtastic API is unavailable
+     * @returns {Promise<{stable: Release[], alpha: Release[]}>} Object with stable and alpha release arrays
      */
     async fetchReleases() {
+        // Try Meshtastic's own API first (has better caching)
         try {
-            // Try Meshtastic's own API first (has better caching)
-            const response = await fetch('https://api.meshtastic.org/github/firmware/list');
+            const response = await fetch('https://api.meshtastic.org/github/firmware/list', {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json',
+                },
+                // Don't include credentials to avoid CORS issues
+                credentials: 'omit',
+                mode: 'cors'
+            });
+            
             if (response.ok) {
                 const data = await response.json();
-                return {
-                    stable: data.releases.stable.slice(0, 4),
-                    alpha: data.releases.alpha.slice(0, 4)
-                };
+                if (data.releases && data.releases.stable && data.releases.alpha) {
+                    return {
+                        stable: data.releases.stable.slice(0, 4),
+                        alpha: data.releases.alpha.slice(0, 4)
+                    };
+                }
             }
         } catch (e) {
             console.warn("Meshtastic API unavailable, falling back to GitHub API", e);
         }
 
-        // Fallback to GitHub API
+        // Fallback to GitHub API (has CORS support)
         try {
-            const response = await fetch('https://api.github.com/repos/meshtastic/firmware/releases');
-            const data = await response.json();
-            const stable = data.filter(r => !r.prerelease).slice(0, 4).map(rel => ({
-                id: rel.tag_name,
-                title: rel.name,
-                zip_url: rel.assets.find(a => a.name.endsWith('.zip'))?.browser_download_url
-            }));
-            const alpha = data.filter(r => r.prerelease).slice(0, 4).map(rel => ({
-                id: rel.tag_name,
-                title: rel.name,
-                zip_url: rel.assets.find(a => a.name.endsWith('.zip'))?.browser_download_url
-            }));
-            return { stable, alpha };
+            const response = await fetch('https://api.github.com/repos/meshtastic/firmware/releases', {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/vnd.github.v3+json',
+                },
+                credentials: 'omit',
+                mode: 'cors'
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                const stable = data.filter(r => !r.prerelease).slice(0, 4).map(rel => ({
+                    id: rel.tag_name,
+                    title: rel.name || rel.tag_name,
+                    zip_url: rel.assets?.find(a => a.name.endsWith('.zip'))?.browser_download_url
+                })).filter(r => r.zip_url); // Only include releases with zip files
+                
+                const alpha = data.filter(r => r.prerelease).slice(0, 4).map(rel => ({
+                    id: rel.tag_name,
+                    title: rel.name || rel.tag_name,
+                    zip_url: rel.assets?.find(a => a.name.endsWith('.zip'))?.browser_download_url
+                })).filter(r => r.zip_url);
+                
+                return { stable, alpha };
+            } else {
+                console.warn(`GitHub API returned status ${response.status}`);
+            }
         } catch (e) {
             console.error("Failed to fetch GitHub releases", e);
-            return { stable: [], alpha: [] };
         }
+        
+        // Final fallback: return empty arrays (UI will show custom file option)
+        console.warn("All firmware release APIs failed, using custom file option only");
+        return { stable: [], alpha: [] };
     }
 
     /**
      * Select a firmware release for flashing
+     * @param {Release} release - Release object to select
      */
     selectRelease(release) {
         this.selectedRelease = release;
@@ -210,6 +254,9 @@ export class BatchManager {
     /**
      * Fetch a firmware binary file from the selected release
      * Uses CORS-friendly Meshtastic mirror
+     * @param {string} fileName - Binary filename to fetch
+     * @returns {Promise<string>} Binary string representation of firmware
+     * @throws {Error} If no release selected or fetch fails
      */
     async fetchFirmwareBinary(fileName) {
         if (!this.selectedRelease?.zip_url) {
@@ -231,6 +278,11 @@ export class BatchManager {
         return arrayBufferToBinaryString(buffer);
     }
 
+    /**
+     * Set OTA gateway device
+     * @param {string} deviceId - Device ID to set as OTA gateway
+     * @throws {Error} If device not found or device is OTA type
+     */
     setOTAGateway(deviceId) {
         const device = this.devices.find(d => d.id === deviceId);
         if (!device) throw new Error('Device not found');
@@ -240,6 +292,11 @@ export class BatchManager {
         this.logGlobal(`OTA Gateway set to ${device.name}`);
     }
 
+    /**
+     * Add an OTA target device
+     * @param {string|null} [nodeId=null] - Meshtastic node ID (optional)
+     * @returns {Promise<Device>} Created OTA device object
+     */
     async addDeviceOTA(nodeId = null) {
         const deviceId = crypto.randomUUID().split('-')[0].toUpperCase();
         const device = {
@@ -260,6 +317,11 @@ export class BatchManager {
         return device;
     }
 
+    /**
+     * Add a USB device via Web Serial API
+     * @returns {Promise<Device>} Created USB device object
+     * @throws {Error} If Web Serial API not supported or user cancels
+     */
     async addDeviceUSB() {
         if (!navigator.serial) {
             throw new Error('Web Serial API not supported.');
@@ -268,6 +330,11 @@ export class BatchManager {
         return this._createDevice(port, 'usb');
     }
 
+    /**
+     * Add a BLE device via Web Bluetooth API
+     * @returns {Promise<Device>} Created BLE device object
+     * @throws {Error} If Web Bluetooth API not supported or connection fails
+     */
     async addDeviceBLE() {
         const transport = new BLETransport();
         const info = await transport.connect();
@@ -277,6 +344,15 @@ export class BatchManager {
     /**
      * Add a disconnected device placeholder with board info and configuration
      * User can connect the device later by clicking "Connect" button
+     * @param {Object} board - Board definition object
+     * @param {string} board.id - Board ID
+     * @param {string} board.name - Board name
+     * @param {string} board.vendor - Board vendor
+     * @param {string} board.chip - Chip type
+     * @param {string} board.icon - Board icon emoji
+     * @param {Config} config - Configuration to apply when device connects
+     * @param {string} [config.deviceName] - Device name
+     * @returns {Device} Created disconnected device object
      */
     addDisconnectedDevice(board, config) {
         const deviceId = crypto.randomUUID().split('-')[0].toUpperCase();
@@ -307,6 +383,10 @@ export class BatchManager {
     /**
      * Connect a disconnected device placeholder to a physical device
      * Establishes USB or BLE connection and applies pending configuration
+     * @param {string} deviceId - Device ID to connect
+     * @param {string} connectionType - Connection type: 'usb' or 'ble'
+     * @returns {Promise<Device>} Updated device object
+     * @throws {Error} If device not found, already connected, or connection fails
      */
     async connectDevice(deviceId, connectionType) {
         const device = this.devices.find(d => d.id === deviceId);
@@ -420,6 +500,10 @@ export class BatchManager {
         return this._createDevice(port, 'usb');
     }
 
+    /**
+     * Remove a device from the batch
+     * @param {string} id - Device ID to remove
+     */
     removeDevice(id) {
         if (this.isFlashing) return;
         const device = this.devices.find(d => d.id === id);
@@ -436,6 +520,11 @@ export class BatchManager {
     /**
      * Selection management methods
      */
+    /**
+     * Select or deselect a device
+     * @param {string} deviceId - Device ID
+     * @param {boolean} [selected=true] - Whether to select (true) or deselect (false)
+     */
     selectDevice(deviceId, selected = true) {
         if (selected) {
             this.selectedDevices.add(deviceId);
@@ -444,10 +533,17 @@ export class BatchManager {
         }
     }
 
+    /**
+     * Deselect a device
+     * @param {string} deviceId - Device ID to deselect
+     */
     deselectDevice(deviceId) {
         this.selectedDevices.delete(deviceId);
     }
 
+    /**
+     * Select all devices (except OTA targets)
+     */
     selectAll() {
         this.devices.forEach(device => {
             if (device.connectionType !== 'ota') { // Don't select OTA targets
@@ -456,33 +552,54 @@ export class BatchManager {
         });
     }
 
+    /**
+     * Deselect all devices
+     */
     deselectAll() {
         this.selectedDevices.clear();
     }
 
+    /**
+     * Get all selected devices
+     * @returns {Device[]} Array of selected device objects
+     */
     getSelectedDevices() {
         return this.devices.filter(d => this.selectedDevices.has(d.id));
     }
 
+    /**
+     * Check if a device is selected
+     * @param {string} deviceId - Device ID to check
+     * @returns {boolean} True if device is selected
+     */
     isSelected(deviceId) {
         return this.selectedDevices.has(deviceId);
     }
 
+    /**
+     * Get the number of selected devices
+     * @returns {number} Number of selected devices
+     */
     getSelectionCount() {
         return this.selectedDevices.size;
     }
 
+    /**
+     * Log a message to a device's log array and global logs
+     * @param {Device} device - Device object
+     * @param {string} msg - Log message
+     */
     log(device, msg) {
-        const time = new Date().toLocaleTimeString([], { hour12: false });
-        const logEntry = `[${time}] ${msg}`;
-        device.logs.unshift(logEntry);
+        logToDevice(device, msg);
         this.logGlobal(`${device.name}: ${msg}`);
     }
 
+    /**
+     * Log a message to global logs
+     * @param {string} msg - Log message
+     */
     logGlobal(msg) {
-        const time = new Date().toLocaleTimeString([], { hour12: false });
-        this.globalLogs.unshift(`[${time}] ${msg}`);
-        if (this.globalLogs.length > 100) this.globalLogs.pop();
+        logToGlobal(this.globalLogs, msg);
     }
 
     /**
@@ -932,9 +1049,16 @@ export class BatchManager {
     }
 
     /**
-     * Validate configuration object
+     * Validate configuration object (internal method)
      */
     _validateConfig(config) {
+        // Check if structured config format
+        if (config.lora || config.device || config.display || config.network || config.bluetooth || config.position || config.power || config.modules) {
+            // Structured format - use public validateConfig
+            return this.validateConfig(config);
+        }
+        
+        // Legacy format validation
         const validFields = ['region', 'channelName', 'role', 'modemPreset', 'txPower', 'hopLimit'];
         const hasValidField = Object.keys(config).some(key => validFields.includes(key));
         
@@ -1120,6 +1244,181 @@ export class BatchManager {
 
         this.logGlobal(`Config injection complete: ${successful} success, ${failed} failed`);
         return { successful, failed };
+    }
+
+    /**
+     * Configuration Preset System
+     */
+    getConfigurationPresets() {
+        return getStorage('batchtastic_config_presets', []);
+    }
+
+    /**
+     * Save a configuration preset
+     * @param {string} name - Preset name
+     * @param {Config} config - Configuration object to save
+     * @returns {Preset} Created preset object
+     */
+    saveConfigurationPreset(name, config) {
+        const presets = this.getConfigurationPresets();
+        const preset = {
+            id: crypto.randomUUID(),
+            name: name,
+            config: config,
+            createdAt: new Date().toISOString()
+        };
+        presets.push(preset);
+        setStorage('batchtastic_config_presets', presets);
+        return preset;
+    }
+
+    /**
+     * Load a configuration preset
+     * @param {string} presetId - Preset ID
+     * @returns {Config} Configuration object from preset
+     * @throws {Error} If preset not found
+     */
+    loadConfigurationPreset(presetId) {
+        const presets = this.getConfigurationPresets();
+        const preset = presets.find(p => p.id === presetId);
+        if (!preset) {
+            throw new Error('Preset not found');
+        }
+        return preset.config;
+    }
+
+    /**
+     * Delete a configuration preset
+     * @param {string} presetId - Preset ID to delete
+     */
+    deleteConfigurationPreset(presetId) {
+        const presets = this.getConfigurationPresets();
+        const filtered = presets.filter(p => p.id !== presetId);
+        setStorage('batchtastic_config_presets', filtered);
+    }
+
+    /**
+     * Export configuration as JSON
+     */
+    exportConfiguration(deviceId = null) {
+        if (deviceId) {
+            const device = this.devices.find(d => d.id === deviceId);
+            if (!device) throw new Error('Device not found');
+            return JSON.stringify({
+                deviceId: device.id,
+                deviceName: device.name,
+                config: device.pendingConfig || {},
+                exportedAt: new Date().toISOString()
+            }, null, 2);
+        } else {
+            // Export all device configs
+            return JSON.stringify({
+                devices: this.devices.map(d => ({
+                    deviceId: d.id,
+                    deviceName: d.name,
+                    config: d.pendingConfig || {}
+                })),
+                exportedAt: new Date().toISOString()
+            }, null, 2);
+        }
+    }
+
+    /**
+     * Import configuration from JSON
+     */
+    importConfiguration(configJson) {
+        try {
+            const data = JSON.parse(configJson);
+            if (data.deviceId) {
+                // Single device import
+                const device = this.devices.find(d => d.id === data.deviceId);
+                if (!device) throw new Error('Device not found');
+                device.pendingConfig = data.config;
+                return { deviceId: data.deviceId };
+            } else if (data.devices) {
+                // Bulk import
+                const results = [];
+                for (const deviceData of data.devices) {
+                    const device = this.devices.find(d => d.id === deviceData.deviceId);
+                    if (device) {
+                        device.pendingConfig = deviceData.config;
+                        results.push(deviceData.deviceId);
+                    }
+                }
+                return { deviceIds: results };
+            } else {
+                throw new Error('Invalid import format');
+            }
+        } catch (e) {
+            throw new Error(`Import failed: ${e.message}`);
+        }
+    }
+
+    /**
+     * Validate configuration (public method)
+     */
+    validateConfig(config) {
+        const errors = [];
+        
+        // Check if structured config format
+        const isStructured = !!(config.lora || config.device || config.display || config.network || config.bluetooth || config.position || config.power || config.modules);
+        
+        if (isStructured) {
+            // Handle structured config format
+            const loraConfig = config.lora || {};
+            const deviceConfig = config.device || {};
+            
+            // Validate LoRa config
+            if (loraConfig.region) {
+                const validRegions = ['US', 'EU_868', 'EU_433', 'CN', 'JP', 'ANZ', 'KR', 'TW', 'RU', 'IN', 'NZ_865', 'TH', 'LORA_24', 'UA_433', 'UA_868', 'MY_433', 'MY_919', 'SG_923'];
+                if (!validRegions.includes(loraConfig.region)) {
+                    errors.push('Invalid LoRa region');
+                }
+            }
+            
+            if (loraConfig.txPower !== undefined && (loraConfig.txPower < 0 || loraConfig.txPower > 30)) {
+                errors.push('TX Power must be between 0 and 30 dBm');
+            }
+            
+            if (loraConfig.hopLimit !== undefined && (loraConfig.hopLimit < 1 || loraConfig.hopLimit > 7)) {
+                errors.push('Hop Limit must be between 1 and 7');
+            }
+            
+            // Validate device config
+            if (deviceConfig.role) {
+                const validRoles = ['CLIENT', 'CLIENT_MUTE', 'ROUTER', 'TRACKER', 'SENSOR', 'TAK', 'CLIENT_HIDDEN', 'LOST_AND_FOUND', 'TAK_TRACKER', 'ROUTER_LATE', 'CLIENT_BASE'];
+                if (!validRoles.includes(deviceConfig.role)) {
+                    errors.push('Invalid device role');
+                }
+            }
+            
+            // Check if config has at least one section with data
+            const hasAnyConfig = !!(loraConfig.region || loraConfig.modemPreset || loraConfig.hopLimit !== undefined || loraConfig.txPower !== undefined ||
+                deviceConfig.role || deviceConfig.serialEnabled !== undefined ||
+                config.display || config.network || config.bluetooth || config.position || config.power || config.modules);
+            
+            if (!hasAnyConfig) {
+                errors.push('Config must contain at least one valid field');
+            }
+        } else {
+            // Legacy format validation
+            const validFields = ['region', 'channelName', 'role', 'modemPreset', 'txPower', 'hopLimit'];
+            const hasValidField = Object.keys(config).some(key => validFields.includes(key));
+            
+            if (!hasValidField) {
+                errors.push('Config must contain at least one valid field: ' + validFields.join(', '));
+            }
+            
+            if (config.region && !['US', 'EU_868', 'EU_433', 'CN', 'JP', 'ANZ', 'KR', 'TW', 'RU', 'IN', 'NZ_865', 'TH', 'LORA_24', 'UA_433', 'UA_868', 'MY_433', 'MY_919', 'SG_923'].includes(config.region)) {
+                errors.push(`Invalid region: ${config.region}`);
+            }
+        }
+        
+        if (errors.length > 0) {
+            throw new Error(`Configuration validation failed: ${errors.join(', ')}`);
+        }
+        
+        return true;
     }
 
     exportReport() {

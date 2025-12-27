@@ -4,6 +4,28 @@ import { OTAHandler } from '../src/OTAHandler.js';
 import { encodeXModemPacket, encodeOTAStart } from '../src/ProtobufEncoder.js';
 import * as Protobuf from '@meshtastic/protobufs';
 
+// Mock localStorage
+const localStorageMock = (() => {
+    let store = {};
+    return {
+        getItem: vi.fn((key) => store[key] || null),
+        setItem: vi.fn((key, value) => {
+            store[key] = value.toString();
+        }),
+        removeItem: vi.fn((key) => {
+            delete store[key];
+        }),
+        clear: vi.fn(() => {
+            store = {};
+        })
+    };
+})();
+
+Object.defineProperty(global, 'localStorage', {
+    value: localStorageMock,
+    writable: true
+});
+
 // Mock Web Serial API using Object.defineProperty (navigator is read-only)
 Object.defineProperty(global, 'navigator', {
     value: {
@@ -28,6 +50,7 @@ describe('BatchManager', () => {
     let manager;
 
     beforeEach(() => {
+        localStorageMock.clear();
         manager = new BatchManager();
         vi.clearAllMocks();
     });
