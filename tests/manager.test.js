@@ -337,6 +337,132 @@ describe('BatchManager', () => {
         });
     });
 
+    describe('Device Selection', () => {
+        it('should initialize with empty selection', () => {
+            expect(manager.selectedDevices.size).toBe(0);
+            expect(manager.getSelectionCount()).toBe(0);
+        });
+
+        it('should select a device', () => {
+            const mockPort = { name: 'MockPort' };
+            manager.addDevice(mockPort);
+            const device = manager.devices[0];
+            
+            manager.selectDevice(device.id);
+            
+            expect(manager.isSelected(device.id)).toBe(true);
+            expect(manager.getSelectionCount()).toBe(1);
+        });
+
+        it('should deselect a device', () => {
+            const mockPort = { name: 'MockPort' };
+            manager.addDevice(mockPort);
+            const device = manager.devices[0];
+            
+            manager.selectDevice(device.id);
+            manager.deselectDevice(device.id);
+            
+            expect(manager.isSelected(device.id)).toBe(false);
+            expect(manager.getSelectionCount()).toBe(0);
+        });
+
+        it('should select all devices (excluding OTA)', async () => {
+            const mockPort1 = { name: 'MockPort1' };
+            const mockPort2 = { name: 'MockPort2' };
+            const device1 = await manager.addDevice(mockPort1);
+            const device2 = await manager.addDevice(mockPort2);
+            await manager.addDeviceOTA('!12345678');
+            
+            manager.selectAll();
+            
+            expect(manager.getSelectionCount()).toBe(2); // Only USB/BLE devices
+            expect(manager.isSelected(device1.id)).toBe(true);
+            expect(manager.isSelected(device2.id)).toBe(true);
+            // OTA device should not be selected
+            const otaDevice = manager.devices.find(d => d.connectionType === 'ota');
+            expect(manager.isSelected(otaDevice.id)).toBe(false);
+        });
+
+        it('should deselect all devices', async () => {
+            const mockPort = { name: 'MockPort' };
+            await manager.addDevice(mockPort);
+            const device = manager.devices[0];
+            
+            manager.selectDevice(device.id);
+            manager.deselectAll();
+            
+            expect(manager.getSelectionCount()).toBe(0);
+        });
+
+        it('should get selected devices array', async () => {
+            const mockPort1 = { name: 'MockPort1' };
+            const mockPort2 = { name: 'MockPort2' };
+            const device1 = await manager.addDevice(mockPort1);
+            await manager.addDevice(mockPort2);
+            
+            manager.selectDevice(device1.id);
+            
+            const selected = manager.getSelectedDevices();
+            expect(selected.length).toBe(1);
+            expect(selected[0].id).toBe(device1.id);
+        });
+
+        it('should remove device from selection when device is removed', async () => {
+            const mockPort = { name: 'MockPort' };
+            await manager.addDevice(mockPort);
+            const device = manager.devices[0];
+            
+            manager.selectDevice(device.id);
+            manager.removeDevice(device.id);
+            
+            expect(manager.getSelectionCount()).toBe(0);
+            expect(manager.devices.length).toBe(0);
+        });
+
+        it('should inject config to selected devices only', async () => {
+            const mockWriter1 = {
+                write: vi.fn(() => Promise.resolve()),
+                releaseLock: vi.fn()
+            };
+            const mockWriter2 = {
+                write: vi.fn(() => Promise.resolve()),
+                releaseLock: vi.fn()
+            };
+            const mockPort1 = { 
+                name: 'MockPort1',
+                writable: {
+                    getWriter: vi.fn(() => mockWriter1)
+                },
+                open: vi.fn(() => Promise.resolve())
+            };
+            const mockPort2 = { 
+                name: 'MockPort2',
+                writable: {
+                    getWriter: vi.fn(() => mockWriter2)
+                },
+                open: vi.fn(() => Promise.resolve())
+            };
+            
+            await manager.addDevice(mockPort1);
+            await manager.addDevice(mockPort2);
+            
+            // Select only first device
+            manager.selectDevice(manager.devices[0].id);
+            
+            const config = { region: 'US' };
+            await manager.injectConfigSelected(config);
+            
+            // Only first device should have been written to
+            expect(mockWriter1.write).toHaveBeenCalled();
+            expect(mockWriter2.write).not.toHaveBeenCalled();
+        });
+
+        it('should throw error if no devices selected for injectConfigSelected', async () => {
+            const config = { region: 'US' };
+            await expect(manager.injectConfigSelected(config)).rejects.toThrow('No devices selected');
+        });
+    });
+
     describe('Report Export', () => {
         it('should export report with device data', async () => {
             const mockPort = { name: 'MockPort' };

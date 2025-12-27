@@ -11,14 +11,44 @@
 <div class="hud-container">
     <aside class="controls">
         <div class="card">
-            <h2>⚡ Batch Controls</h2>
+            <h2>⚡ Batch Operations</h2>
+            <div id="batchStatus" class="batch-status">
+                <span class="batch-status-indicator"></span>
+                <span id="batchStatusText">No devices connected</span>
+            </div>
             <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
-                <button class="btn btn-primary" style="flex:1" onclick="manager.addDeviceUSB().then(render).catch(e => alert(e.message))">🔌 USB</button>
-                <button class="btn btn-primary" style="flex:1" onclick="manager.addDeviceBLE().then(render).catch(e => alert(e.message))">📶 BLE</button>
+                <button class="btn btn-primary" style="flex:1" onclick="manager.addDeviceUSB().then(render).catch(e => alert(e.message))">🔌 Add USB</button>
+                <button class="btn btn-primary" style="flex:1" onclick="manager.addDeviceBLE().then(render).catch(e => alert(e.message))">📶 Add BLE</button>
             </div>
             <button class="btn btn-secondary" style="margin-bottom: 0.5rem;" onclick="const nodeId = prompt('Enter Meshtastic Node ID (or leave blank):'); manager.addDeviceOTA(nodeId || null).then(render).catch(e => alert(e.message))">📡 Add OTA Target</button>
-            <button class="btn btn-success" id="flashAllBtn" onclick="manager.flashAll()" disabled>🚀 Flash & Deploy All</button>
-            <button class="btn btn-success" id="otaBtn" onclick="manager.flashAllOTA().catch(e => alert(e.message))" disabled style="margin-top: 0.5rem;">🌐 OTA Update All</button>
+            <div style="border-top: 1px solid #334155; margin: 0.75rem 0; padding-top: 0.75rem;">
+                <button class="btn btn-success" id="flashAllBtn" onclick="manager.flashAll()" disabled style="width: 100%; font-size: 1rem; padding: 0.875rem;">🚀 Flash All Selected</button>
+                <button class="btn btn-success" id="otaBtn" onclick="manager.flashAllOTA().catch(e => alert(e.message))" disabled style="margin-top: 0.5rem; width: 100%;">🌐 OTA Update All</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>📋 Device Templates</h2>
+            <div class="form-group">
+                <label>Template Name</label>
+                <input type="text" id="templateName" placeholder="e.g., Router-01, Field-Node-A">
+            </div>
+            <div class="form-group">
+                <label>Device Name</label>
+                <input type="text" id="templateDeviceName" placeholder="Name for this device (optional)">
+            </div>
+            <button class="btn btn-secondary" style="margin-top: 0.5rem;" onclick="saveCurrentAsTemplate()">💾 Save Current Settings as Template</button>
+            <div id="templateList" style="margin-top: 1rem; max-height: 200px; overflow-y: auto;">
+                <!-- Templates will be rendered here -->
+            </div>
+            <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #334155;">
+                <div class="form-group">
+                    <label>Pending Devices (Pre-configured)</label>
+                    <div id="pendingDevices" style="font-size: 0.85rem;">
+                        <!-- Pending devices will be rendered here -->
+                    </div>
+                </div>
+            </div>
         </div>
 
         <div class="card">
@@ -31,11 +61,38 @@
                     <option value="EU_433">Europe (433MHz)</option>
                     <option value="CN">China (470MHz)</option>
                     <option value="JP">Japan (920MHz)</option>
+                    <option value="ANZ">Australia/New Zealand</option>
+                    <option value="KR">South Korea</option>
+                    <option value="TW">Taiwan</option>
+                    <option value="RU">Russia</option>
+                    <option value="IN">India</option>
+                    <option value="NZ_865">New Zealand (865MHz)</option>
+                    <option value="TH">Thailand</option>
+                    <option value="LORA_24">LoRa 2.4GHz</option>
+                    <option value="UA_433">Ukraine (433MHz)</option>
+                    <option value="UA_868">Ukraine (868MHz)</option>
+                    <option value="MY_433">Malaysia (433MHz)</option>
+                    <option value="MY_919">Malaysia (919MHz)</option>
+                    <option value="SG_923">Singapore (923MHz)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Modem Preset</label>
+                <select id="modemPreset">
+                    <option value="">Default (use channel name)</option>
+                    <option value="LONG_FAST">Long Fast</option>
+                    <option value="LONG_SLOW">Long Slow</option>
+                    <option value="LONG_MODERATE">Long Moderate</option>
+                    <option value="MEDIUM_FAST">Medium Fast</option>
+                    <option value="MEDIUM_SLOW">Medium Slow</option>
+                    <option value="SHORT_FAST">Short Fast</option>
+                    <option value="SHORT_SLOW">Short Slow</option>
+                    <option value="VERY_LONG_SLOW">Very Long Slow</option>
                 </select>
             </div>
             <div class="form-group">
                 <label>Primary Channel</label>
-                <input type="text" id="channelName" value="LongFast">
+                <input type="text" id="channelName" value="LongFast" placeholder="e.g., LongFast, MediumFast">
             </div>
             <div class="form-group">
                 <label>Node Role</label>
@@ -43,13 +100,33 @@
                     <option value="ROUTER">Router</option>
                     <option value="CLIENT">Client</option>
                     <option value="CLIENT_MUTE">Client Mute</option>
+                    <option value="TRACKER">Tracker</option>
+                    <option value="SENSOR">Sensor</option>
+                    <option value="TAK">TAK</option>
+                    <option value="CLIENT_HIDDEN">Client Hidden</option>
+                    <option value="LOST_AND_FOUND">Lost and Found</option>
+                    <option value="TAK_TRACKER">TAK Tracker</option>
+                    <option value="ROUTER_LATE">Router Late</option>
+                    <option value="CLIENT_BASE">Client Base</option>
                 </select>
             </div>
-            <button class="btn btn-primary" style="margin-top: 0.5rem;" onclick="applyMissionProfile()">⚙️ Apply to All Devices</button>
+            <div class="form-group">
+                <label>TX Power (dBm)</label>
+                <input type="number" id="txPower" min="0" max="30" placeholder="Auto (leave empty)">
+            </div>
+            <div class="form-group">
+                <label>Hop Limit</label>
+                <input type="number" id="hopLimit" min="1" max="7" placeholder="Auto (leave empty)">
+            </div>
+            <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+                <button class="btn btn-secondary" style="flex: 1;" onclick="manager.selectAll(); render();">✓ Select All</button>
+                <button class="btn btn-secondary" style="flex: 1;" onclick="manager.deselectAll(); render();">✗ Deselect All</button>
+            </div>
+            <button class="btn btn-primary" style="margin-top: 0.5rem; width: 100%;" onclick="applyMissionProfile()" id="applyProfileBtn">⚙️ Apply to All Devices</button>
         </div>
 
         <div class="card">
-            <h2>📂 Firmware</h2>
+            <h2>📂 Firmware & Platform</h2>
             <div class="form-group">
                 <label>Release Channel</label>
                 <select id="releaseChannel">
@@ -64,25 +141,40 @@
                 </select>
             </div>
             <div class="form-group">
-                <label>Target Platform</label>
-                <select id="targetPlatform">
-                    <optgroup label="Heltec">
-                        <option value="heltec-v3">Heltec V3</option>
-                        <option value="heltec-v2">Heltec V2</option>
-                        <option value="heltec-wireless-tracker">Wireless Tracker</option>
-                    </optgroup>
-                    <optgroup label="LilyGO">
-                        <option value="tbeam" selected>T-Beam</option>
-                        <option value="tbeam-s3-core">T-Beam S3</option>
-                        <option value="tlora-v2">T-LoRa V2</option>
-                        <option value="tlora-t3s3-v1">T-LoRa T3S3</option>
-                        <option value="t-deck">T-Deck</option>
-                    </optgroup>
-                    <optgroup label="RAK">
-                        <option value="rak4631">RAK4631</option>
-                        <option value="rak11200">RAK11200</option>
-                    </optgroup>
-                </select>
+                <label>Select Target Platform</label>
+                <div id="platformGrid" class="platform-grid">
+                    <div class="platform-card" data-platform="tbeam" onclick="selectPlatform('tbeam')">
+                        <div class="platform-icon">📡</div>
+                        <div class="platform-name">T-Beam</div>
+                        <div class="platform-vendor">LilyGO</div>
+                    </div>
+                    <div class="platform-card" data-platform="tbeam-s3-core" onclick="selectPlatform('tbeam-s3-core')">
+                        <div class="platform-icon">📡</div>
+                        <div class="platform-name">T-Beam S3</div>
+                        <div class="platform-vendor">LilyGO</div>
+                    </div>
+                    <div class="platform-card" data-platform="tlora-v2" onclick="selectPlatform('tlora-v2')">
+                        <div class="platform-icon">📻</div>
+                        <div class="platform-name">T-LoRa V2</div>
+                        <div class="platform-vendor">LilyGO</div>
+                    </div>
+                    <div class="platform-card" data-platform="heltec-v3" onclick="selectPlatform('heltec-v3')">
+                        <div class="platform-icon">📡</div>
+                        <div class="platform-name">Heltec V3</div>
+                        <div class="platform-vendor">Heltec</div>
+                    </div>
+                    <div class="platform-card" data-platform="rak4631" onclick="selectPlatform('rak4631')">
+                        <div class="platform-icon">📡</div>
+                        <div class="platform-name">RAK4631</div>
+                        <div class="platform-vendor">RAK</div>
+                    </div>
+                    <div class="platform-card" data-platform="t-deck" onclick="selectPlatform('t-deck')">
+                        <div class="platform-icon">⌨️</div>
+                        <div class="platform-name">T-Deck</div>
+                        <div class="platform-vendor">LilyGO</div>
+                    </div>
+                </div>
+                <input type="hidden" id="targetPlatform" value="tbeam">
             </div>
             <label style="display: flex; align-items: center; gap: 0.5rem; margin: 0.5rem 0; font-size: 0.85rem;">
                 <input type="checkbox" id="fullInstall">

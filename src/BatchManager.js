@@ -45,6 +45,118 @@ export class BatchManager {
         this.otaGateway = null;
         this.selectedRelease = null;
         this.baudRate = 115200;
+        this.selectedDevices = new Set(); // Set of device IDs for selection
+        this.deviceTemplates = this._loadTemplates(); // Load saved templates from localStorage
+        this.pendingDevices = []; // Devices waiting to be connected (with pre-assigned templates)
+    }
+
+    /**
+     * Load device templates from localStorage
+     */
+    _loadTemplates() {
+        try {
+            const stored = localStorage.getItem('batchtastic_templates');
+            return stored ? JSON.parse(stored) : [];
+        } catch (e) {
+            console.warn('Failed to load templates:', e);
+            return [];
+        }
+    }
+
+    /**
+     * Save device templates to localStorage
+     */
+    _saveTemplates() {
+        try {
+            localStorage.setItem('batchtastic_templates', JSON.stringify(this.deviceTemplates));
+        } catch (e) {
+            console.warn('Failed to save templates:', e);
+        }
+    }
+
+    /**
+     * Create a device template/profile
+     */
+    createTemplate(template) {
+        if (!template.name) {
+            throw new Error('Template must have a name');
+        }
+        
+        const newTemplate = {
+            id: crypto.randomUUID(),
+            name: template.name,
+            deviceName: template.deviceName || template.name,
+            region: template.region || 'US',
+            channelName: template.channelName || 'LongFast',
+            role: template.role || 'ROUTER',
+            modemPreset: template.modemPreset || '',
+            txPower: template.txPower || null,
+            hopLimit: template.hopLimit || null,
+            createdAt: new Date().toISOString()
+        };
+        
+        this.deviceTemplates.push(newTemplate);
+        this._saveTemplates();
+        this.logGlobal(`Template "${newTemplate.name}" created`);
+        return newTemplate;
+    }
+
+    /**
+     * Delete a template
+     */
+    deleteTemplate(templateId) {
+        this.deviceTemplates = this.deviceTemplates.filter(t => t.id !== templateId);
+        this._saveTemplates();
+        this.logGlobal('Template deleted');
+    }
+
+    /**
+     * Get a template by ID
+     */
+    getTemplate(templateId) {
+        return this.deviceTemplates.find(t => t.id === templateId);
+    }
+
+    /**
+     * Add a pending device (device that will be connected later with a template)
+     */
+    addPendingDevice(templateId, customName = null) {
+        const template = this.getTemplate(templateId);
+        if (!template) {
+            throw new Error('Template not found');
+        }
+        
+        const pendingDevice = {
+            id: crypto.randomUUID(),
+            templateId: templateId,
+            name: customName || template.deviceName,
+            template: template,
+            status: 'pending'
+        };
+        
+        this.pendingDevices.push(pendingDevice);
+        this.logGlobal(`Pending device "${pendingDevice.name}" added (will use template "${template.name}")`);
+        return pendingDevice;
+    }
+
+    /**
+     * Remove a pending device
+     */
+    removePendingDevice(pendingId) {
+        this.pendingDevices = this.pendingDevices.filter(p => p.id !== pendingId);
+    }
+
+    /**
+     * Rename a device
+     */
+    renameDevice(deviceId, newName) {
+        const device = this.devices.find(d => d.id === deviceId);
+        if (!device) {
+            throw new Error('Device not found');
+        }
+        const oldName = device.name;
+        device.name = newName;
+        this.logGlobal(`Device renamed: ${oldName} → ${newName}`);
     }
 
     /**
@@ -164,6 +276,14 @@ export class BatchManager {
 
     _createDevice(connection, type, info = {}) {
         const deviceId = crypto.randomUUID().split('-')[0].toUpperCase();
+        
+        // Check if there's a pending device waiting for this connection
+        let pendingDevice = null;
+        if (this.pendingDevices.length > 0) {
+            // Use the first pending device, or match by some criteria if needed
+            pendingDevice = this.pendingDevices.shift();
+        }
+        
         const device = {
             id: deviceId,
             connection: connection,
@@ -180,10 +300,29 @@ export class BatchManager {
             airUtilHistory: [], // Time-series air utilization data
             loader: null,
             chipInfo: null,
-            name: info.name || `NODE-${deviceId}`
+            name: info.name || pendingDevice?.name || `NODE-${deviceId}`,
+            template: pendingDevice?.template || null // Store template reference for auto-config
         };
+        
         this.devices.push(device);
         this.logGlobal(`${type.toUpperCase()} device ${device.name} connected.`);
+        
+        // Auto-apply template config if available
+        if (device.template) {
+            this.logGlobal(`Auto-applying template "${device.template.name}" to ${device.name}...`);
+            // Apply config asynchronously (don't await to avoid blocking device creation)
+            this.injectConfig(device.id, {
+                region: device.template.region,
+                channelName: device.template.channelName,
+                role: device.template.role,
+                modemPreset: device.template.modemPreset || undefined,
+                txPower: device.template.txPower || undefined,
+                hopLimit: device.template.hopLimit || undefined
+            }).catch(e => {
+                this.log(device, `⚠️ Auto-config failed: ${e.message}`);
+            });
+        }
+        
         return device;
     }
 
@@ -200,7 +339,47 @@ export class BatchManager {
         if (this.otaGateway?.id === id) {
             this.otaGateway = null;
         }
+        this.selectedDevices.delete(id); // Remove from selection if present
         this.devices = this.devices.filter(d => d.id !== id);
+    }
+
+    /**
+     * Selection management methods
+     */
+    selectDevice(deviceId, selected = true) {
+        if (selected) {
+            this.selectedDevices.add(deviceId);
+        } else {
+            this.selectedDevices.delete(deviceId);
+        }
+    }
+
+    deselectDevice(deviceId) {
+        this.selectedDevices.delete(deviceId);
+    }
+
+    selectAll() {
+        this.devices.forEach(device => {
+            if (device.connectionType !== 'ota') { // Don't select OTA targets
+                this.selectedDevices.add(device.id);
+            }
+        });
+    }
+
+    deselectAll() {
+        this.selectedDevices.clear();
+    }
+
+    getSelectedDevices() {
+        return this.devices.filter(d => this.selectedDevices.has(d.id));
+    }
+
+    isSelected(deviceId) {
+        return this.selectedDevices.has(deviceId);
+    }
+
+    getSelectionCount() {
+        return this.selectedDevices.size;
     }
 
     log(device, msg) {
@@ -780,6 +959,64 @@ export class BatchManager {
         }
 
         this.logGlobal(`Injecting config to ${targetDevices.length} device(s)...`);
+        
+        const results = await Promise.allSettled(
+            targetDevices.map(d => this.injectConfig(d.id, config))
+        );
+
+        const successful = results.filter(r => r.status === 'fulfilled').length;
+        const failed = results.filter(r => r.status === 'rejected').length;
+
+        this.logGlobal(`Config injection complete: ${successful} success, ${failed} failed`);
+        return { successful, failed };
+    }
+
+    /**
+     * Inject configuration to selected devices only
+     */
+    async injectConfigSelected(config, deviceIds = null) {
+        const targetIds = deviceIds || Array.from(this.selectedDevices);
+        
+        if (targetIds.length === 0) {
+            throw new Error('No devices selected for config injection');
+        }
+
+        const targetDevices = this.devices.filter(d => targetIds.includes(d.id) && d.connectionType !== 'ota');
+        
+        if (targetDevices.length === 0) {
+            throw new Error('No valid devices selected for config injection');
+        }
+
+        this.logGlobal(`Injecting config to ${targetDevices.length} selected device(s)...`);
+        
+        const results = await Promise.allSettled(
+            targetDevices.map(d => this.injectConfig(d.id, config))
+        );
+
+        const successful = results.filter(r => r.status === 'fulfilled').length;
+        const failed = results.filter(r => r.status === 'rejected').length;
+
+        this.logGlobal(`Config injection complete: ${successful} success, ${failed} failed`);
+        return { successful, failed };
+    }
+
+    /**
+     * Inject configuration to selected devices only
+     */
+    async injectConfigSelected(config, deviceIds = null) {
+        const targetIds = deviceIds || Array.from(this.selectedDevices);
+        
+        if (targetIds.length === 0) {
+            throw new Error('No devices selected for config injection');
+        }
+
+        const targetDevices = this.devices.filter(d => targetIds.includes(d.id) && d.connectionType !== 'ota');
+        
+        if (targetDevices.length === 0) {
+            throw new Error('No valid devices selected for config injection');
+        }
+
+        this.logGlobal(`Injecting config to ${targetDevices.length} selected device(s)...`);
         
         const results = await Promise.allSettled(
             targetDevices.map(d => this.injectConfig(d.id, config))
