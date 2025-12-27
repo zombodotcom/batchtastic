@@ -26,20 +26,207 @@ if (packetRainCanvas) {
 window.manager = manager;
 window.render = render;
 
-// Platform selector
-window.selectPlatform = function(platform) {
-    document.getElementById('targetPlatform').value = platform;
-    // Update visual selection
-    document.querySelectorAll('.platform-card').forEach(card => {
-        card.classList.remove('selected');
+// Board definitions (similar to Meshtastic flasher)
+const BOARD_DEFINITIONS = [
+    { id: 'tbeam', name: 'T-Beam', vendor: 'LilyGO', chip: 'esp32', icon: '📡' },
+    { id: 'tbeam-s3-core', name: 'T-Beam S3', vendor: 'LilyGO', chip: 'esp32-s3', icon: '📡' },
+    { id: 'tlora-v2', name: 'T-LoRa V2', vendor: 'LilyGO', chip: 'esp32', icon: '📻' },
+    { id: 'tlora-t3s3-v1', name: 'T-LoRa T3S3', vendor: 'LilyGO', chip: 'esp32-s3', icon: '📻' },
+    { id: 't-deck', name: 'T-Deck', vendor: 'LilyGO', chip: 'esp32-s3', icon: '⌨️' },
+    { id: 'heltec-v3', name: 'Heltec V3', vendor: 'Heltec', chip: 'esp32', icon: '📡' },
+    { id: 'heltec-v2', name: 'Heltec V2', vendor: 'Heltec', chip: 'esp32', icon: '📡' },
+    { id: 'heltec-wireless-tracker', name: 'Wireless Tracker', vendor: 'Heltec', chip: 'esp32', icon: '📡' },
+    { id: 'rak4631', name: 'RAK4631', vendor: 'RAK', chip: 'nrf52840', icon: '📡' },
+    { id: 'rak11200', name: 'RAK11200', vendor: 'RAK', chip: 'esp32-s3', icon: '📡' },
+    { id: 'seeed-xiao-esp32s3', name: 'Xiao ESP32-S3', vendor: 'Seeed', chip: 'esp32-s3', icon: '📡' },
+];
+
+let currentVendorFilter = 'all';
+let currentChipFilter = 'all';
+
+// Board Selector Modal Functions
+window.openBoardSelector = function() {
+    const modal = document.getElementById('boardSelectorModal');
+    if (modal) {
+        modal.style.display = 'flex';
+        renderBoardGrid();
+    }
+};
+
+window.closeBoardSelector = function() {
+    const modal = document.getElementById('boardSelectorModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+};
+
+window.filterBoards = function(vendor) {
+    currentVendorFilter = vendor;
+    document.querySelectorAll('.filter-btn[data-filter]').forEach(btn => {
+        btn.classList.remove('active');
     });
-    document.querySelector(`[data-platform="${platform}"]`)?.classList.add('selected');
+    document.querySelector(`[data-filter="${vendor}"]`)?.classList.add('active');
+    renderBoardGrid();
+};
+
+window.filterChips = function(chip) {
+    currentChipFilter = chip;
+    document.querySelectorAll('.filter-btn[data-chip]').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    document.querySelector(`[data-chip="${chip}"]`)?.classList.add('active');
+    renderBoardGrid();
+};
+
+function renderBoardGrid() {
+    const boardGrid = document.getElementById('boardGrid');
+    if (!boardGrid) return;
+
+    let filteredBoards = BOARD_DEFINITIONS;
+
+    if (currentVendorFilter !== 'all') {
+        filteredBoards = filteredBoards.filter(b => 
+            b.vendor.toLowerCase() === currentVendorFilter.toLowerCase()
+        );
+    }
+
+    if (currentChipFilter !== 'all') {
+        filteredBoards = filteredBoards.filter(b => 
+            b.chip === currentChipFilter
+        );
+    }
+
+    boardGrid.innerHTML = filteredBoards.map(board => `
+        <div class="board-card" onclick="selectBoard('${board.id}')">
+            <div class="board-icon">${board.icon}</div>
+            <div class="board-name">${board.name}</div>
+            <div class="board-vendor">${board.vendor}</div>
+            <div class="board-chip">${board.chip.toUpperCase()}</div>
+        </div>
+    `).join('');
+}
+
+window.selectBoard = async function(boardId) {
+    const board = BOARD_DEFINITIONS.find(b => b.id === boardId);
+    if (!board) return;
+
+    // Close modal
+    closeBoardSelector();
+
+    // Prompt for connection type
+    const connectionType = await promptConnectionType();
+    if (!connectionType) return;
+
+    try {
+        let device;
+        if (connectionType === 'usb') {
+            device = await manager.addDeviceUSB();
+        } else if (connectionType === 'ble') {
+            device = await manager.addDeviceBLE();
+        } else {
+            return; // User cancelled
+        }
+
+        // Store board type with device
+        device.boardType = boardId;
+        device.boardName = board.name;
+        device.boardVendor = board.vendor;
+        device.boardChip = board.chip;
+        device.boardIcon = board.icon;
+
+        render();
+    } catch (e) {
+        alert(`Failed to add device: ${e.message}`);
+    }
+};
+
+async function promptConnectionType() {
+    return new Promise((resolve) => {
+        const choice = confirm('Connect via USB?\n\nOK = USB\nCancel = BLE');
+        resolve(choice ? 'usb' : 'ble');
+    });
+}
+
+// Configuration Panel Functions
+window.openConfigPanel = function() {
+    const modal = document.getElementById('configPanelModal');
+    if (modal) {
+        modal.style.display = 'flex';
+    }
+};
+
+window.closeConfigPanel = function() {
+    const modal = document.getElementById('configPanelModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+};
+
+window.applyConfigToAll = async function() {
+    const region = document.getElementById('region')?.value;
+    const channelName = document.getElementById('channelName')?.value;
+    const nodeRole = document.getElementById('nodeRole')?.value;
+    const modemPreset = document.getElementById('modemPreset')?.value;
+    const txPower = document.getElementById('txPower')?.value;
+    const hopLimit = document.getElementById('hopLimit')?.value;
+
+    if (!region || !channelName) {
+        alert('Please fill in Region and Channel Name');
+        return;
+    }
+
+    const profile = {
+        name: 'Batch Profile',
+        region: region,
+        channelName: channelName,
+        role: nodeRole
+    };
+
+    if (modemPreset) profile.modemPreset = modemPreset;
+    if (txPower) profile.txPower = parseInt(txPower, 10);
+    if (hopLimit) profile.hopLimit = parseInt(hopLimit, 10);
+
+    try {
+        manager.logGlobal(`Applying configuration to all devices...`);
+        render();
+        const result = await manager.injectConfigAll(profile);
+        manager.logGlobal(`✅ Configuration applied: ${result.successful} success, ${result.failed} failed`);
+        closeConfigPanel();
+        render();
+    } catch (e) {
+        alert(`Config injection error: ${e.message}`);
+    }
+};
+
+// Flash All Function
+window.flashAllDevices = async function() {
+    if (manager.isFlashing) return;
+
+    // Get platform from first device's board type, or default
+    const firstDevice = manager.devices.find(d => d.connectionType !== 'ota' && d.boardType);
+    const targetPlatform = firstDevice?.boardType || document.getElementById('targetPlatform')?.value || 'tbeam';
+    const fullInstall = document.getElementById('fullInstall')?.checked || false;
+
+    const options = {
+        eraseAll: fullInstall,
+        targetPlatform: targetPlatform
+    };
+
+    try {
+        manager.logGlobal(`Starting batch flash: ${options.eraseAll ? 'Full Install' : 'Update'} for ${targetPlatform}`);
+        render();
+        await manager.flashAllUSB(options);
+    } catch (e) {
+        alert(`Flash error: ${e.message}`);
+    }
     render();
 };
 
-// Initialize platform selection
-document.addEventListener('DOMContentLoaded', () => {
-    selectPlatform('tbeam'); // Default to T-Beam
+// Close modals when clicking outside
+document.addEventListener('click', (e) => {
+    if (e.target.classList.contains('modal-overlay')) {
+        e.target.style.display = 'none';
+    }
 });
 
 // Load esptool-js from CDN
@@ -223,90 +410,94 @@ manager.addDeviceOTA = async function(...args) {
 
 function render() {
     const deviceGrid = document.getElementById('deviceGrid');
-    const globalLog = document.getElementById('globalLog');
-    const batchStats = document.getElementById('batchStats');
+    const emptyState = document.getElementById('emptyState');
+    const deviceCountBadge = document.getElementById('deviceCountBadge');
+    const configureAllBtn = document.getElementById('configureAllBtn');
+    const flashAllBtn = document.getElementById('flashAllBtn');
     
-    if (!deviceGrid || !globalLog || !batchStats) return;
-    
-    deviceGrid.innerHTML = manager.devices.map(d => {
-        const isSelected = manager.isSelected(d.id);
-        const canSelect = d.connectionType !== 'ota'; // Don't allow selecting OTA targets
-        const isReady = d.status === 'ready' && canSelect;
-        return `
-        <div class="device-card ${d.status === 'active' ? 'flashing' : ''} ${isSelected ? 'device-selected' : ''} ${isReady ? 'device-ready' : ''}" 
-             style="${manager.otaGateway?.id === d.id ? 'border: 2px solid var(--accent);' : ''} ${isSelected ? 'border: 2px solid var(--accent); background: var(--bg-secondary);' : ''}">
-            <div class="device-header" style="display: flex; align-items: center; gap: 0.5rem;">
-                ${canSelect ? `
-                <label style="display: flex; align-items: center; cursor: pointer;">
-                    <input type="checkbox" 
-                           ${isSelected ? 'checked' : ''} 
-                           onchange="manager.selectDevice('${d.id}', this.checked); render();"
-                           style="margin-right: 0.5rem; cursor: pointer; width: 18px; height: 18px;"
-                           ${manager.isFlashing ? 'disabled' : ''}>
-                </label>
-                ` : '<span style="width: 1.5rem;"></span>'}
-                <span class="device-name" style="flex: 1; cursor: pointer; font-weight: 600;" onclick="renameDevice('${d.id}')" title="Click to rename">
-                    ${d.name}
-                    ${isReady ? '<span style="font-size:0.65rem; color:var(--success); margin-left:0.5rem;">✓ Ready</span>' : ''}
-                </span>
-                <div style="display: flex; align-items: center; gap: 0.5rem;">
-                    <span style="font-size:0.7rem; color:var(--text-dim); text-transform: uppercase;">${d.connectionType}</span>
-                    ${manager.otaGateway?.id === d.id ? '<span style="font-size:0.7rem; color:var(--accent);">🌐 GATEWAY</span>' : ''}
-                    ${d.chipInfo ? `<span style="font-size:0.7rem; color:var(--success);">${d.chipInfo}</span>` : ''}
-                    ${d.template ? `<span style="font-size:0.65rem; color:var(--accent);">📋 ${d.template.name}</span>` : ''}
-                    <span class="status-pill status-${d.status}">${d.status}</span>
-                    <button onclick="manager.removeDevice('${d.id}'); render();" style="background:none; border:none; color:var(--error); cursor:pointer; padding: 0.25rem; font-size: 1.2rem; line-height: 1;" ${manager.isFlashing ? 'disabled' : ''} title="Remove device">✕</button>
+    if (!deviceGrid) return;
+
+    // Show/hide empty state
+    if (manager.devices.length === 0) {
+        deviceGrid.innerHTML = '<div class="empty-state" id="emptyState"><div class="empty-icon">📡</div><h2>No devices added yet</h2><p>Click "Add Device" to start batch programming</p></div>';
+    } else {
+        deviceGrid.innerHTML = manager.devices.map(d => {
+            const isSelected = manager.isSelected(d.id);
+            const canSelect = d.connectionType !== 'ota';
+            const isReady = d.status === 'ready' && canSelect;
+            const boardInfo = d.boardName ? `${d.boardName} (${d.boardVendor})` : 'Unknown Board';
+            const boardIcon = d.boardIcon || '📡';
+            
+            return `
+            <div class="device-card ${d.status === 'active' ? 'flashing' : ''} ${isSelected ? 'device-selected' : ''} ${isReady ? 'device-ready' : ''}" 
+                 style="${manager.otaGateway?.id === d.id ? 'border: 2px solid var(--accent);' : ''}">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
+                    <div style="flex: 1;">
+                        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+                            ${canSelect ? `
+                            <label style="display: flex; align-items: center; cursor: pointer;">
+                                <input type="checkbox" 
+                                       ${isSelected ? 'checked' : ''} 
+                                       onchange="manager.selectDevice('${d.id}', this.checked); render();"
+                                       style="cursor: pointer; width: 20px; height: 20px;"
+                                       ${manager.isFlashing ? 'disabled' : ''}>
+                            </label>
+                            ` : ''}
+                            <span class="device-name" style="font-weight: 700; font-size: 1.1rem; cursor: pointer;" onclick="renameDevice('${d.id}')" title="Click to rename">
+                                ${d.name}
+                            </span>
+                        </div>
+                        <div style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 0.5rem;">
+                            ${boardIcon} ${boardInfo}
+                        </div>
+                        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                            <span style="font-size:0.75rem; padding: 0.25rem 0.5rem; background: var(--bg-secondary); border-radius: 0.25rem; text-transform: uppercase;">${d.connectionType}</span>
+                            ${manager.otaGateway?.id === d.id ? '<span style="font-size:0.75rem; padding: 0.25rem 0.5rem; background: rgba(56,189,248,0.2); border-radius: 0.25rem; color: var(--accent);">🌐 GATEWAY</span>' : ''}
+                            ${d.chipInfo ? `<span style="font-size:0.75rem; padding: 0.25rem 0.5rem; background: rgba(34,197,94,0.2); border-radius: 0.25rem; color: var(--success);">${d.chipInfo}</span>` : ''}
+                            ${d.configured ? '<span style="font-size:0.75rem; padding: 0.25rem 0.5rem; background: rgba(34,197,94,0.2); border-radius: 0.25rem; color: var(--success);">⚙️ Configured</span>' : ''}
+                            ${isReady ? '<span style="font-size:0.75rem; padding: 0.25rem 0.5rem; background: rgba(34,197,94,0.2); border-radius: 0.25rem; color: var(--success);">✓ Ready</span>' : ''}
+                            <span class="status-pill status-${d.status}">${d.status}</span>
+                        </div>
+                    </div>
+                    <button onclick="manager.removeDevice('${d.id}'); render();" 
+                            style="background:none; border:none; color:var(--error); cursor:pointer; padding: 0.5rem; font-size: 1.5rem; line-height: 1; opacity: 0.7; transition: opacity 0.2s;" 
+                            onmouseover="this.style.opacity='1'" 
+                            onmouseout="this.style.opacity='0.7'"
+                            ${manager.isFlashing ? 'disabled' : ''} 
+                            title="Remove device">✕</button>
                 </div>
+                ${d.progress > 0 ? `
+                <div class="progress-container">
+                    <div class="progress-bar" style="width: ${d.progress}%"></div>
+                </div>
+                <div style="font-size: 0.75rem; color: var(--text-dim); margin-top: 0.25rem;">${d.progress}%</div>
+                ` : ''}
+                ${d.logs && d.logs.length > 0 ? `
+                <div class="log-container" style="margin-top: 1rem; height: 60px; font-size: 0.7rem;">
+                    ${d.logs.slice(0, 3).map(l => `<div>${l}</div>`).join('')}
+                </div>
+                ` : ''}
             </div>
-            <div class="progress-container">
-                <div class="progress-bar" style="width: ${d.progress}%"></div>
-            </div>
-            <div style="font-size: 0.7rem; color: var(--text-dim); margin-bottom: 0.5rem;">${d.progress}%</div>
-            <div class="telemetry-grid">
-                <div class="telemetry-item">
-                    <div class="telemetry-label">Battery</div>
-                    <div class="telemetry-value">${d.telemetry.batt}V</div>
-                </div>
-                <div class="telemetry-item">
-                    <div class="telemetry-label">SNR</div>
-                    <div class="telemetry-value">${d.telemetry.snr}dB</div>
-                </div>
-                <div class="telemetry-item">
-                    <div class="telemetry-label">Air Util</div>
-                    <div class="telemetry-value">${d.telemetry.util}%</div>
-                </div>
-            </div>
-            ${d.snrHistory && d.snrHistory.length > 0 ? `
-                <div style="margin-top: 0.5rem;">
-                    <div style="font-size: 0.7rem; color: var(--text-dim); margin-bottom: 0.25rem;">SNR Trend</div>
-                    ${renderSNRChart(d.snrHistory, 200, 60)}
-                </div>
-            ` : ''}
-            ${d.airUtilHistory && d.airUtilHistory.length > 0 ? `
-                <div style="margin-top: 0.5rem;">
-                    <div style="font-size: 0.7rem; color: var(--text-dim); margin-bottom: 0.25rem;">Air Utilization</div>
-                    ${renderAirUtilChart(d.airUtilHistory, 200, 60)}
-                </div>
-            ` : ''}
-            <div class="log-container">
-                ${d.logs.slice(0, 20).map(l => `<div>${l}</div>`).join('')}
-            </div>
-        </div>
-    `;
-    }).join('');
+        `;
+        }).join('');
+    }
+
+    // Update device count badge
+    const deviceCount = manager.devices.length;
+    if (deviceCountBadge) {
+        deviceCountBadge.textContent = `${deviceCount} device${deviceCount !== 1 ? 's' : ''}`;
+    }
+
+    // Update buttons
+    const hasDirectDevices = manager.devices.some(d => d.connectionType !== 'ota');
+    const hasFirmware = manager.firmwareBinaries.length > 0 || manager.selectedRelease !== null;
     
-    globalLog.innerHTML = manager.globalLogs.slice(0, 50).map(l => `<div>${l}</div>`).join('');
-    
-    const directCount = manager.devices.filter(d => d.connectionType !== 'ota').length;
-    const otaCount = manager.devices.filter(d => d.connectionType === 'ota').length;
-    const fwCount = manager.firmwareBinaries.length;
-    const selectedCount = manager.getSelectionCount();
-    
-    batchStats.innerText = `${directCount} Direct | ${otaCount} OTA | ${fwCount} FW files | ${selectedCount > 0 ? `${selectedCount} Selected | ` : ''}${manager.isFlashing ? '⚡ FLASHING' : 'Ready'}`;
-    
-    // Update batch status indicator
-    updateBatchStatus();
-    updateButtons();
+    if (configureAllBtn) {
+        configureAllBtn.disabled = !hasDirectDevices || manager.isFlashing;
+    }
+    if (flashAllBtn) {
+        flashAllBtn.disabled = !hasDirectDevices || manager.isFlashing || !hasFirmware;
+    }
 }
 
 function updateBatchStatus() {
@@ -540,7 +731,8 @@ render = function() {
 };
 window.render = render; // Update global reference
 
-// Initial render
-render();
-renderTemplates(); // Render templates on load
-renderTemplates(); // Render templates on load
+// Initialize board grid on load
+document.addEventListener('DOMContentLoaded', () => {
+    renderBoardGrid();
+    render();
+});

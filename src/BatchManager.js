@@ -301,7 +301,13 @@ export class BatchManager {
             loader: null,
             chipInfo: null,
             name: info.name || pendingDevice?.name || `NODE-${deviceId}`,
-            template: pendingDevice?.template || null // Store template reference for auto-config
+            template: pendingDevice?.template || null, // Store template reference for auto-config
+            boardType: info.boardType || null, // Board type (tbeam, heltec-v3, etc.)
+            boardName: info.boardName || null,
+            boardVendor: info.boardVendor || null,
+            boardChip: info.boardChip || null,
+            boardIcon: info.boardIcon || null,
+            configured: false // Track if device has been configured
         };
         
         this.devices.push(device);
@@ -915,6 +921,7 @@ export class BatchManager {
             }
 
             this.log(device, '✅ Config injected successfully');
+            device.configured = true; // Mark device as configured
             this.logGlobal(`Config injected to ${device.name}`);
             
         } catch (e) {
