@@ -203,21 +203,28 @@ export function encodeOTAStart(filename) {
 
 /**
  * Encode multiple config messages (for when both region and role need to be set)
- * @param {Object} config - Config object with multiple fields
+ * Supports both legacy format (flat config object) and new format (structured config object)
+ * @param {Object} config - Config object with multiple fields (legacy) or structured config (new)
  * @returns {Uint8Array[]} Array of binary protobuf ToRadio messages
  */
 export function encodeMultipleConfigsToProtobuf(config) {
+    // Check if this is a structured config object (new format)
+    if (config.lora || config.device || config.display || config.network || config.bluetooth || config.position || config.power || config.modules) {
+        return encodeFullConfig(config);
+    }
+    
+    // Legacy format: flat config object
     const messages = [];
     
-    // If both region and role are present, send separate messages
-    if (config.region || config.modemPreset || config.hopLimit !== undefined) {
+    // LoRa config (region, modemPreset, hopLimit, txPower)
+    if (config.region || config.modemPreset || config.hopLimit !== undefined || config.txPower !== undefined) {
         const loraConfig = {};
-            if (config.region) {
-                const regionCode = REGION_MAP[config.region];
-                if (regionCode !== undefined) {
-                    loraConfig.region = regionCode;
-                }
+        if (config.region) {
+            const regionCode = REGION_MAP[config.region];
+            if (regionCode !== undefined) {
+                loraConfig.region = regionCode;
             }
+        }
         if (config.modemPreset) {
             const preset = MODEM_PRESET_MAP[config.modemPreset];
             if (preset !== undefined) {
@@ -227,82 +234,488 @@ export function encodeMultipleConfigsToProtobuf(config) {
         if (config.hopLimit !== undefined) {
             loraConfig.hopLimit = config.hopLimit;
         }
+        if (config.txPower !== undefined) {
+            loraConfig.txPower = config.txPower;
+        }
         
         if (Object.keys(loraConfig).length > 0) {
-            const configMessage = create(Protobuf.Config.ConfigSchema, {
-                payloadVariant: {
-                    case: "lora",
-                    value: create(Protobuf.Config.Config_LoRaConfigSchema, loraConfig)
-                }
-            });
-            
-            const adminMessage = create(Protobuf.Admin.AdminMessageSchema, {
-                payloadVariant: {
-                    case: "setConfig",
-                    value: configMessage
-                }
-            });
-            
-            const meshPacket = create(Protobuf.Mesh.MeshPacketSchema, {
-                payloadVariant: {
-                    case: "decoded",
-                    value: {
-                        payload: toBinary(Protobuf.Admin.AdminMessageSchema, adminMessage),
-                        portnum: Protobuf.Portnums.PortNum.ADMIN_APP,
-                        wantResponse: true
-                    }
-                }
-            });
-            
-            const toRadio = create(Protobuf.Mesh.ToRadioSchema, {
-                payloadVariant: {
-                    case: "packet",
-                    value: meshPacket
-                }
-            });
-            
-            messages.push(toBinary(Protobuf.Mesh.ToRadioSchema, toRadio));
+            const msg = encodeLoRaConfig(loraConfig);
+            if (msg) messages.push(msg);
         }
     }
     
+    // Device config (role)
     if (config.role) {
-        const roleCode = ROLE_MAP[config.role];
-        if (roleCode !== undefined) {
-            const configMessage = create(Protobuf.Config.ConfigSchema, {
-                payloadVariant: {
-                    case: "device",
-                    value: create(Protobuf.Config.Config_DeviceConfigSchema, {
-                        role: roleCode
-                    })
-                }
-            });
-            
-            const adminMessage = create(Protobuf.Admin.AdminMessageSchema, {
-                payloadVariant: {
-                    case: "setConfig",
-                    value: configMessage
-                }
-            });
-            
-            const meshPacket = create(Protobuf.Mesh.MeshPacketSchema, {
-                payloadVariant: {
-                    case: "decoded",
-                    value: {
-                        payload: toBinary(Protobuf.Admin.AdminMessageSchema, adminMessage),
-                        portnum: Protobuf.Portnums.PortNum.ADMIN_APP,
-                        wantResponse: true
-                    }
-                }
-            });
-            
-            const toRadio = create(Protobuf.Mesh.ToRadioSchema, {
-                payloadVariant: {
-                    case: "packet",
-                    value: meshPacket
-                }
-            });
-            
-            messages.push(toBinary(Protobuf.Mesh.ToRadioSchema, toRadio));
+        const msg = encodeDeviceConfig({ role: config.role });
+        if (msg) messages.push(msg);
+    }
+    
+    return messages;
+}
+
+/**
+ * Helper function to wrap a Config message in ToRadio binary
+ */
+function wrapConfigInToRadio(configMessage) {
+    const adminMessage = create(Protobuf.Admin.AdminMessageSchema, {
+        payloadVariant: {
+            case: "setConfig",
+            value: configMessage
+        }
+    });
+    
+    const meshPacket = create(Protobuf.Mesh.MeshPacketSchema, {
+        payloadVariant: {
+            case: "decoded",
+            value: {
+                payload: toBinary(Protobuf.Admin.AdminMessageSchema, adminMessage),
+                portnum: Protobuf.Portnums.PortNum.ADMIN_APP,
+                wantResponse: true
+            }
+        }
+    });
+    
+    const toRadio = create(Protobuf.Mesh.ToRadioSchema, {
+        payloadVariant: {
+            case: "packet",
+            value: meshPacket
+        }
+    });
+    
+    return toBinary(Protobuf.Mesh.ToRadioSchema, toRadio);
+}
+
+/**
+ * Encode LoRa Config
+ */
+export function encodeLoRaConfig(loraConfig) {
+    const config = {};
+    
+    if (loraConfig.region) {
+        const regionCode = REGION_MAP[loraConfig.region];
+        if (regionCode !== undefined) config.region = regionCode;
+    }
+    
+    if (loraConfig.modemPreset) {
+        const preset = MODEM_PRESET_MAP[loraConfig.modemPreset];
+        if (preset !== undefined) config.modemPreset = preset;
+    }
+    
+    if (loraConfig.hopLimit !== undefined) config.hopLimit = loraConfig.hopLimit;
+    if (loraConfig.txPower !== undefined) config.txPower = loraConfig.txPower;
+    if (loraConfig.txEnabled !== undefined) config.txEnabled = loraConfig.txEnabled;
+    if (loraConfig.bandwidth !== undefined) config.bandwidth = loraConfig.bandwidth;
+    if (loraConfig.spreadFactor !== undefined) config.spreadFactor = loraConfig.spreadFactor;
+    if (loraConfig.codingRate !== undefined) config.codingRate = loraConfig.codingRate;
+    if (loraConfig.frequencyOffset !== undefined) config.frequencyOffset = loraConfig.frequencyOffset;
+    if (loraConfig.channelNum !== undefined) config.channelNum = loraConfig.channelNum;
+    
+    if (Object.keys(config).length === 0) return null;
+    
+    const configMessage = create(Protobuf.Config.ConfigSchema, {
+        payloadVariant: {
+            case: "lora",
+            value: create(Protobuf.Config.Config_LoRaConfigSchema, config)
+        }
+    });
+    
+    return wrapConfigInToRadio(configMessage);
+}
+
+/**
+ * Encode Device Config
+ */
+export function encodeDeviceConfig(deviceConfig) {
+    const config = {};
+    
+    if (deviceConfig.role) {
+        const roleCode = ROLE_MAP[deviceConfig.role];
+        if (roleCode !== undefined) config.role = roleCode;
+    }
+    
+    if (deviceConfig.serialEnabled !== undefined) config.serialEnabled = deviceConfig.serialEnabled;
+    if (deviceConfig.debugLogEnabled !== undefined) config.debugLogEnabled = deviceConfig.debugLogEnabled;
+    if (deviceConfig.buttonGpio !== undefined) config.buttonGpio = deviceConfig.buttonGpio;
+    if (deviceConfig.buzzerGpio !== undefined) config.buzzerGpio = deviceConfig.buzzerGpio;
+    if (deviceConfig.rebroadcastMode !== undefined) config.rebroadcastMode = deviceConfig.rebroadcastMode;
+    if (deviceConfig.nodeInfoBroadcastSecs !== undefined) config.nodeInfoBroadcastSecs = deviceConfig.nodeInfoBroadcastSecs;
+    if (deviceConfig.doubleTapAsButtonPress !== undefined) config.doubleTapAsButtonPress = deviceConfig.doubleTapAsButtonPress;
+    if (deviceConfig.isManaged !== undefined) config.isManaged = deviceConfig.isManaged;
+    if (deviceConfig.disableTripleClick !== undefined) config.disableTripleClick = deviceConfig.disableTripleClick;
+    
+    if (Object.keys(config).length === 0) return null;
+    
+    const configMessage = create(Protobuf.Config.ConfigSchema, {
+        payloadVariant: {
+            case: "device",
+            value: create(Protobuf.Config.Config_DeviceConfigSchema, config)
+        }
+    });
+    
+    return wrapConfigInToRadio(configMessage);
+}
+
+/**
+ * Encode Display Config
+ */
+export function encodeDisplayConfig(displayConfig) {
+    const config = {};
+    
+    if (displayConfig.screenOnSecs !== undefined) config.screenOnSecs = displayConfig.screenOnSecs;
+    if (displayConfig.gpsFormat !== undefined) config.gpsFormat = displayConfig.gpsFormat;
+    if (displayConfig.autoScreenCarouselSecs !== undefined) config.autoScreenCarouselSecs = displayConfig.autoScreenCarouselSecs;
+    if (displayConfig.compassNorthTop !== undefined) config.compassNorthTop = displayConfig.compassNorthTop;
+    if (displayConfig.flipScreen !== undefined) config.flipScreen = displayConfig.flipScreen;
+    if (displayConfig.units !== undefined) config.units = displayConfig.units;
+    if (displayConfig.oledType !== undefined) config.oledType = displayConfig.oledType;
+    if (displayConfig.displayMode !== undefined) config.displayMode = displayConfig.displayMode;
+    if (displayConfig.headingBollard !== undefined) config.headingBollard = displayConfig.headingBollard;
+    if (displayConfig.wakeOnTapOrMotion !== undefined) config.wakeOnTapOrMotion = displayConfig.wakeOnTapOrMotion;
+    
+    if (Object.keys(config).length === 0) return null;
+    
+    const configMessage = create(Protobuf.Config.ConfigSchema, {
+        payloadVariant: {
+            case: "display",
+            value: create(Protobuf.Config.Config_DisplayConfigSchema, config)
+        }
+    });
+    
+    return wrapConfigInToRadio(configMessage);
+}
+
+/**
+ * Encode Network Config
+ */
+export function encodeNetworkConfig(networkConfig) {
+    const config = {};
+    
+    if (networkConfig.wifiEnabled !== undefined) config.wifiEnabled = networkConfig.wifiEnabled;
+    if (networkConfig.wifiSsid) config.wifiSsid = networkConfig.wifiSsid;
+    if (networkConfig.wifiPsk) config.wifiPsk = networkConfig.wifiPsk;
+    if (networkConfig.ntpServer) config.ntpServer = networkConfig.ntpServer;
+    if (networkConfig.addressMode !== undefined) config.addressMode = networkConfig.addressMode;
+    if (networkConfig.ip) config.ip = networkConfig.ip;
+    if (networkConfig.gateway) config.gateway = networkConfig.gateway;
+    if (networkConfig.subnet) config.subnet = networkConfig.subnet;
+    if (networkConfig.dnsServer) config.dnsServer = networkConfig.dnsServer;
+    
+    if (Object.keys(config).length === 0) return null;
+    
+    const configMessage = create(Protobuf.Config.ConfigSchema, {
+        payloadVariant: {
+            case: "network",
+            value: create(Protobuf.Config.Config_NetworkConfigSchema, config)
+        }
+    });
+    
+    return wrapConfigInToRadio(configMessage);
+}
+
+/**
+ * Encode Bluetooth Config
+ */
+export function encodeBluetoothConfig(bluetoothConfig) {
+    const config = {};
+    
+    if (bluetoothConfig.enabled !== undefined) config.enabled = bluetoothConfig.enabled;
+    if (bluetoothConfig.pairingPin !== undefined) config.pairingPin = bluetoothConfig.pairingPin;
+    if (bluetoothConfig.fixedPin !== undefined) config.fixedPin = bluetoothConfig.fixedPin;
+    if (bluetoothConfig.mode !== undefined) config.mode = bluetoothConfig.mode;
+    
+    if (Object.keys(config).length === 0) return null;
+    
+    const configMessage = create(Protobuf.Config.ConfigSchema, {
+        payloadVariant: {
+            case: "bluetooth",
+            value: create(Protobuf.Config.Config_BluetoothConfigSchema, config)
+        }
+    });
+    
+    return wrapConfigInToRadio(configMessage);
+}
+
+/**
+ * Encode Position Config
+ */
+export function encodePositionConfig(positionConfig) {
+    const config = {};
+    
+    if (positionConfig.positionBroadcastSmartEnabled !== undefined) config.positionBroadcastSmartEnabled = positionConfig.positionBroadcastSmartEnabled;
+    if (positionConfig.positionBroadcastSecs !== undefined) config.positionBroadcastSecs = positionConfig.positionBroadcastSecs;
+    if (positionConfig.fixedPosition !== undefined) config.fixedPosition = positionConfig.fixedPosition;
+    if (positionConfig.gpsEnabled !== undefined) config.gpsEnabled = positionConfig.gpsEnabled;
+    if (positionConfig.gpsUpdateInterval !== undefined) config.gpsUpdateInterval = positionConfig.gpsUpdateInterval;
+    if (positionConfig.gpsAttemptTime !== undefined) config.gpsAttemptTime = positionConfig.gpsAttemptTime;
+    if (positionConfig.positionFlags !== undefined) config.positionFlags = positionConfig.positionFlags;
+    
+    if (Object.keys(config).length === 0) return null;
+    
+    const configMessage = create(Protobuf.Config.ConfigSchema, {
+        payloadVariant: {
+            case: "position",
+            value: create(Protobuf.Config.Config_PositionConfigSchema, config)
+        }
+    });
+    
+    return wrapConfigInToRadio(configMessage);
+}
+
+/**
+ * Encode Power Config
+ */
+export function encodePowerConfig(powerConfig) {
+    const config = {};
+    
+    if (powerConfig.isPowerSaving !== undefined) config.isPowerSaving = powerConfig.isPowerSaving;
+    if (powerConfig.onBatteryShutdownAfterSecs !== undefined) config.onBatteryShutdownAfterSecs = powerConfig.onBatteryShutdownAfterSecs;
+    if (powerConfig.adcMultiplierOverride !== undefined) config.adcMultiplierOverride = powerConfig.adcMultiplierOverride;
+    if (powerConfig.numSeconds !== undefined) config.numSeconds = powerConfig.numSeconds;
+    if (powerConfig.waitBluetoothSecs !== undefined) config.waitBluetoothSecs = powerConfig.waitBluetoothSecs;
+    
+    if (Object.keys(config).length === 0) return null;
+    
+    const configMessage = create(Protobuf.Config.ConfigSchema, {
+        payloadVariant: {
+            case: "power",
+            value: create(Protobuf.Config.Config_PowerConfigSchema, config)
+        }
+    });
+    
+    return wrapConfigInToRadio(configMessage);
+}
+
+/**
+ * Encode Module Config (Telemetry, Serial, External Notification, etc.)
+ */
+export function encodeModuleConfig(moduleConfig) {
+    const config = {};
+    let moduleType = null;
+    
+    // Telemetry Module
+    if (moduleConfig.telemetry) {
+        moduleType = "telemetry";
+        const telemetry = moduleConfig.telemetry;
+        if (telemetry.deviceUpdateInterval !== undefined) config.deviceUpdateInterval = telemetry.deviceUpdateInterval;
+        if (telemetry.environmentUpdateInterval !== undefined) config.environmentUpdateInterval = telemetry.environmentUpdateInterval;
+        if (telemetry.environmentMeasurementEnabled !== undefined) config.environmentMeasurementEnabled = telemetry.environmentMeasurementEnabled;
+        if (telemetry.environmentScreenEnabled !== undefined) config.environmentScreenEnabled = telemetry.environmentScreenEnabled;
+        if (telemetry.environmentDisplayFahrenheit !== undefined) config.environmentDisplayFahrenheit = telemetry.environmentDisplayFahrenheit;
+        if (telemetry.airQualityEnabled !== undefined) config.airQualityEnabled = telemetry.airQualityEnabled;
+        if (telemetry.airQualityInterval !== undefined) config.airQualityInterval = telemetry.airQualityInterval;
+        if (telemetry.powerMeasurementEnabled !== undefined) config.powerMeasurementEnabled = telemetry.powerMeasurementEnabled;
+        if (telemetry.powerUpdateInterval !== undefined) config.powerUpdateInterval = telemetry.powerUpdateInterval;
+        if (telemetry.powerScreenEnabled !== undefined) config.powerScreenEnabled = telemetry.powerScreenEnabled;
+    }
+    // Serial Module
+    else if (moduleConfig.serial) {
+        moduleType = "serial";
+        const serial = moduleConfig.serial;
+        if (serial.enabled !== undefined) config.enabled = serial.enabled;
+        if (serial.echo !== undefined) config.echo = serial.echo;
+        if (serial.rxd !== undefined) config.rxd = serial.rxd;
+        if (serial.txd !== undefined) config.txd = serial.txd;
+        if (serial.baud !== undefined) config.baud = serial.baud;
+        if (serial.timeout !== undefined) config.timeout = serial.timeout;
+        if (serial.mode !== undefined) config.mode = serial.mode;
+    }
+    // External Notification Module
+    else if (moduleConfig.externalNotification) {
+        moduleType = "externalNotification";
+        const extNotif = moduleConfig.externalNotification;
+        if (extNotif.enabled !== undefined) config.enabled = extNotif.enabled;
+        if (extNotif.output !== undefined) config.output = extNotif.output;
+        if (extNotif.outputMs !== undefined) config.outputMs = extNotif.outputMs;
+        if (extNotif.outputCanBeLp !== undefined) config.outputCanBeLp = extNotif.outputCanBeLp;
+        if (extNotif.ntfLed !== undefined) config.ntfLed = extNotif.ntfLed;
+        if (extNotif.ntfBuzzer !== undefined) config.ntfBuzzer = extNotif.ntfBuzzer;
+        if (extNotif.ntfVibrate !== undefined) config.ntfVibrate = extNotif.ntfVibrate;
+        if (extNotif.active !== undefined) config.active = extNotif.active;
+        if (extNotif.alertBell !== undefined) config.alertBell = extNotif.alertBell;
+        if (extNotif.alertMessage !== undefined) config.alertMessage = extNotif.alertMessage;
+        if (extNotif.usePwm !== undefined) config.usePwm = extNotif.usePwm;
+        if (extNotif.ntfBellBuzzerAlert !== undefined) config.ntfBellBuzzerAlert = extNotif.ntfBellBuzzerAlert;
+        if (extNotif.ringtone !== undefined) config.ringtone = extNotif.ringtone;
+    }
+    // Store & Forward Module
+    else if (moduleConfig.storeForward) {
+        moduleType = "storeForward";
+        const sf = moduleConfig.storeForward;
+        if (sf.enabled !== undefined) config.enabled = sf.enabled;
+        if (sf.heartbeat !== undefined) config.heartbeat = sf.heartbeat;
+        if (sf.records !== undefined) config.records = sf.records;
+        if (sf.historyReturnMax !== undefined) config.historyReturnMax = sf.historyReturnMax;
+        if (sf.historyReturnWindow !== undefined) config.historyReturnWindow = sf.historyReturnWindow;
+    }
+    // Range Test Module
+    else if (moduleConfig.rangeTest) {
+        moduleType = "rangeTest";
+        const rt = moduleConfig.rangeTest;
+        if (rt.enabled !== undefined) config.enabled = rt.enabled;
+        if (rt.sender !== undefined) config.sender = rt.sender;
+        if (rt.save !== undefined) config.save = rt.save;
+    }
+    // Canned Message Module
+    else if (moduleConfig.cannedMessage) {
+        moduleType = "cannedMessage";
+        const cm = moduleConfig.cannedMessage;
+        if (cm.enabled !== undefined) config.enabled = cm.enabled;
+        if (cm.allowInputSource !== undefined) config.allowInputSource = cm.allowInputSource;
+        if (cm.sendBell !== undefined) config.sendBell = cm.sendBell;
+    }
+    // Audio Module
+    else if (moduleConfig.audio) {
+        moduleType = "audio";
+        const audio = moduleConfig.audio;
+        if (audio.codec2Enabled !== undefined) config.codec2Enabled = audio.codec2Enabled;
+        if (audio.pttPin !== undefined) config.pttPin = audio.pttPin;
+        if (audio.bitrate !== undefined) config.bitrate = audio.bitrate;
+        if (audio.i2sWs !== undefined) config.i2sWs = audio.i2sWs;
+        if (audio.i2sSd !== undefined) config.i2sSd = audio.i2sSd;
+        if (audio.i2sDin !== undefined) config.i2sDin = audio.i2sDin;
+        if (audio.i2sSck !== undefined) config.i2sSck = audio.i2sSck;
+        if (audio.i2sBck !== undefined) config.i2sBck = audio.i2sBck;
+    }
+    // Ambient Lighting Module
+    else if (moduleConfig.ambientLighting) {
+        moduleType = "ambientLighting";
+        const al = moduleConfig.ambientLighting;
+        if (al.ledState !== undefined) config.ledState = al.ledState;
+        if (al.current !== undefined) config.current = al.current;
+        if (al.red !== undefined) config.red = al.red;
+        if (al.green !== undefined) config.green = al.green;
+        if (al.blue !== undefined) config.blue = al.blue;
+    }
+    // Detection Sensor Module
+    else if (moduleConfig.detectionSensor) {
+        moduleType = "detectionSensor";
+        const ds = moduleConfig.detectionSensor;
+        if (ds.enabled !== undefined) config.enabled = ds.enabled;
+        if (ds.minimumBroadcastSecs !== undefined) config.minimumBroadcastSecs = ds.minimumBroadcastSecs;
+        if (ds.stateBroadcastEnabled !== undefined) config.stateBroadcastEnabled = ds.stateBroadcastEnabled;
+    }
+    // Paxcounter Module
+    else if (moduleConfig.paxcounter) {
+        moduleType = "paxcounter";
+        const pc = moduleConfig.paxcounter;
+        if (pc.enabled !== undefined) config.enabled = pc.enabled;
+        if (pc.wifiEnabled !== undefined) config.wifiEnabled = pc.wifiEnabled;
+        if (pc.bleEnabled !== undefined) config.bleEnabled = pc.bleEnabled;
+        if (pc.updateInterval !== undefined) config.updateInterval = pc.updateInterval;
+        if (pc.pincounterEnabled !== undefined) config.pincounterEnabled = pc.pincounterEnabled;
+    }
+    // Telemetry Display Module
+    else if (moduleConfig.telemetryDisplay) {
+        moduleType = "telemetryDisplay";
+        const td = moduleConfig.telemetryDisplay;
+        if (td.telemetryDisplayEnabled !== undefined) config.telemetryDisplayEnabled = td.telemetryDisplayEnabled;
+        if (td.telemetryDisplayScreenTime !== undefined) config.telemetryDisplayScreenTime = td.telemetryDisplayScreenTime;
+        if (td.telemetryDisplayOnTime !== undefined) config.telemetryDisplayOnTime = td.telemetryDisplayOnTime;
+        if (td.telemetryDisplayFramesPerSecond !== undefined) config.telemetryDisplayFramesPerSecond = td.telemetryDisplayFramesPerSecond;
+    }
+    
+    if (!moduleType || Object.keys(config).length === 0) return null;
+    
+    // Map module type to protobuf schema case name
+    const moduleCaseMap = {
+        "telemetry": "telemetry",
+        "serial": "serial",
+        "externalNotification": "externalNotification",
+        "storeForward": "storeForward",
+        "rangeTest": "rangeTest",
+        "cannedMessage": "cannedMessage",
+        "audio": "audio",
+        "ambientLighting": "ambientLighting",
+        "detectionSensor": "detectionSensor",
+        "paxcounter": "paxcounter",
+        "telemetryDisplay": "telemetryDisplay"
+    };
+    
+    const caseName = moduleCaseMap[moduleType];
+    if (!caseName) return null;
+    
+    // Get the appropriate schema
+    const schemaMap = {
+        "telemetry": Protobuf.Config.Config_TelemetryConfigSchema,
+        "serial": Protobuf.Config.Config_SerialConfigSchema,
+        "externalNotification": Protobuf.Config.Config_ExternalNotificationConfigSchema,
+        "storeForward": Protobuf.Config.Config_StoreForwardConfigSchema,
+        "rangeTest": Protobuf.Config.Config_RangeTestConfigSchema,
+        "cannedMessage": Protobuf.Config.Config_CannedMessageConfigSchema,
+        "audio": Protobuf.Config.Config_AudioConfigSchema,
+        "ambientLighting": Protobuf.Config.Config_AmbientLightingConfigSchema,
+        "detectionSensor": Protobuf.Config.Config_DetectionSensorConfigSchema,
+        "paxcounter": Protobuf.Config.Config_PaxcounterConfigSchema,
+        "telemetryDisplay": Protobuf.Config.Config_TelemetryDisplayConfigSchema
+    };
+    
+    const schema = schemaMap[moduleType];
+    if (!schema) return null;
+    
+    const configMessage = create(Protobuf.Config.ConfigSchema, {
+        payloadVariant: {
+            case: caseName,
+            value: create(schema, config)
+        }
+    });
+    
+    return wrapConfigInToRadio(configMessage);
+}
+
+/**
+ * Encode full configuration object with all config types
+ * Returns array of ToRadio messages (one per config type)
+ */
+export function encodeFullConfig(fullConfig) {
+    const messages = [];
+    
+    // LoRa Config
+    if (fullConfig.lora) {
+        const msg = encodeLoRaConfig(fullConfig.lora);
+        if (msg) messages.push(msg);
+    }
+    
+    // Device Config
+    if (fullConfig.device) {
+        const msg = encodeDeviceConfig(fullConfig.device);
+        if (msg) messages.push(msg);
+    }
+    
+    // Display Config
+    if (fullConfig.display) {
+        const msg = encodeDisplayConfig(fullConfig.display);
+        if (msg) messages.push(msg);
+    }
+    
+    // Network Config
+    if (fullConfig.network) {
+        const msg = encodeNetworkConfig(fullConfig.network);
+        if (msg) messages.push(msg);
+    }
+    
+    // Bluetooth Config
+    if (fullConfig.bluetooth) {
+        const msg = encodeBluetoothConfig(fullConfig.bluetooth);
+        if (msg) messages.push(msg);
+    }
+    
+    // Position Config
+    if (fullConfig.position) {
+        const msg = encodePositionConfig(fullConfig.position);
+        if (msg) messages.push(msg);
+    }
+    
+    // Power Config
+    if (fullConfig.power) {
+        const msg = encodePowerConfig(fullConfig.power);
+        if (msg) messages.push(msg);
+    }
+    
+    // Module Configs
+    if (fullConfig.modules) {
+        for (const moduleConfig of fullConfig.modules) {
+            const msg = encodeModuleConfig(moduleConfig);
+            if (msg) messages.push(msg);
         }
     }
     

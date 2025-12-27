@@ -185,6 +185,19 @@ select, input {
     border-left: 3px solid var(--success);
 }
 
+.device-card.disconnected {
+    opacity: 0.7;
+    border-style: dashed;
+    border-color: var(--text-dim);
+    background: rgba(30, 41, 59, 0.5);
+}
+
+.device-card.disconnected:hover {
+    opacity: 1;
+    border-color: var(--accent);
+    background: var(--card);
+}
+
 .device-card.flashing::after {
     content: '';
     position: absolute;
@@ -201,6 +214,7 @@ select, input {
 .status-ready { background: #334155; color: var(--text-dim); }
 .status-active { background: #0c4a6e; color: var(--accent); }
 .status-done { background: #064e3b; color: var(--success); }
+.status-disconnected { background: #475569; color: var(--text-dim); }
 
 .telemetry-grid {
     display: grid;
@@ -421,7 +435,69 @@ select, input {
 }
 
 .config-panel {
-    max-width: 500px;
+    max-width: 900px;
+}
+
+/* Configuration Tabs */
+.config-tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid #334155;
+    overflow-x: auto;
+}
+
+.config-tab {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    padding: 0.75rem 1rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.config-tab:hover {
+    color: var(--text);
+    background: rgba(56, 189, 248, 0.1);
+}
+
+.config-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+.config-tab-content {
+    min-height: 400px;
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.config-tab-panel {
+    display: none;
+}
+
+.config-tab-panel.active {
+    display: block;
+}
+
+.config-section {
+    margin-bottom: 1rem;
+}
+
+.module-section {
+    margin-bottom: 1.5rem;
+}
+
+.advanced-setting {
+    display: none;
+}
+
+.show-advanced .advanced-setting {
+    display: block;
 }
 
 /* Board Grid */

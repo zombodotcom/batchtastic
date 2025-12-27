@@ -1,7 +1,7 @@
 import { BLETransport } from './BLETransport.js';
 import { OTAHandler } from './OTAHandler.js';
 import { BlobReader, ZipReader, BlobWriter } from '@zip.js/zip.js';
-import { encodeConfigToProtobuf, encodeMultipleConfigsToProtobuf, encodeBeginEditSettings } from './ProtobufEncoder.js';
+import { encodeConfigToProtobuf, encodeMultipleConfigsToProtobuf, encodeBeginEditSettings, encodeFullConfig } from './ProtobufEncoder.js';
 
 /**
  * Convert ArrayBuffer to binary string (required by esptool-js)
@@ -272,6 +272,90 @@ export class BatchManager {
         const transport = new BLETransport();
         const info = await transport.connect();
         return this._createDevice(transport, 'ble', info);
+    }
+
+    /**
+     * Add a disconnected device placeholder with board info and configuration
+     * User can connect the device later by clicking "Connect" button
+     */
+    addDisconnectedDevice(board, config) {
+        const deviceId = crypto.randomUUID().split('-')[0].toUpperCase();
+        const device = {
+            id: deviceId,
+            connection: null,
+            connectionType: null, // Will be set on connect
+            status: 'disconnected',
+            boardType: board.id,
+            boardName: board.name,
+            boardVendor: board.vendor,
+            boardChip: board.chip,
+            boardIcon: board.icon,
+            name: config.deviceName || `NODE-${deviceId}`,
+            pendingConfig: config, // Store config to apply on connect
+            configured: false,
+            progress: 0,
+            logs: [],
+            telemetry: { batt: '--', snr: '--', util: '--' },
+            snrHistory: [],
+            airUtilHistory: []
+        };
+        this.devices.push(device);
+        this.logGlobal(`Placeholder device "${device.name}" created (${board.name})`);
+        return device;
+    }
+
+    /**
+     * Connect a disconnected device placeholder to a physical device
+     * Establishes USB or BLE connection and applies pending configuration
+     */
+    async connectDevice(deviceId, connectionType) {
+        const device = this.devices.find(d => d.id === deviceId);
+        if (!device || device.status !== 'disconnected') {
+            throw new Error('Device not found or already connected');
+        }
+        
+        let connection;
+        let connectionInfo = {};
+        
+        if (connectionType === 'usb') {
+            if (!navigator.serial) {
+                throw new Error('Web Serial API not supported');
+            }
+            connection = await navigator.serial.requestPort();
+        } else if (connectionType === 'ble') {
+            const transport = new BLETransport();
+            connectionInfo = await transport.connect();
+            connection = transport;
+        } else {
+            throw new Error('Invalid connection type');
+        }
+        
+        // Update device with connection
+        device.connection = connection;
+        device.connectionType = connectionType;
+        device.status = 'ready';
+        
+        // Update name if BLE provided one
+        if (connectionInfo.name) {
+            device.name = connectionInfo.name;
+        }
+        
+        this.logGlobal(`${device.name} connected via ${connectionType.toUpperCase()}`);
+        
+        // Apply pending configuration
+        if (device.pendingConfig) {
+            this.logGlobal(`Applying pre-configured settings to ${device.name}...`);
+            try {
+                await this.injectConfig(deviceId, device.pendingConfig);
+                device.pendingConfig = null; // Clear after applying
+                this.logGlobal(`✅ Configuration applied to ${device.name}`);
+            } catch (e) {
+                this.log(device, `⚠️ Config application failed: ${e.message}`);
+                // Don't throw - device is still connected, user can configure manually
+            }
+        }
+        
+        return device;
     }
 
     _createDevice(connection, type, info = {}) {
@@ -870,6 +954,30 @@ export class BatchManager {
      * Inject configuration to a device
      * Supports both USB (Web Serial) and BLE (Web Bluetooth) connections
      */
+    /**
+     * Inject full configuration (supports structured config with all types)
+     */
+    async injectFullConfig(config, deviceIds = null) {
+        const targetIds = deviceIds || Array.from(this.selectedDevices.size > 0 ? this.selectedDevices : this.devices.map(d => d.id));
+        const targetDevices = this.devices.filter(d => targetIds.includes(d.id) && d.connectionType !== 'ota');
+        
+        if (targetDevices.length === 0) {
+            throw new Error('No devices selected for config injection');
+        }
+
+        this.logGlobal(`Injecting full configuration to ${targetDevices.length} device(s)...`);
+        
+        const results = await Promise.allSettled(
+            targetDevices.map(d => this.injectConfig(d.id, config))
+        );
+
+        const successful = results.filter(r => r.status === 'fulfilled').length;
+        const failed = results.filter(r => r.status === 'rejected').length;
+
+        this.logGlobal(`Config injection complete: ${successful} success, ${failed} failed`);
+        return { successful, failed };
+    }
+
     async injectConfig(deviceId, config) {
         const device = this.devices.find(d => d.id === deviceId);
         if (!device) {
@@ -884,8 +992,15 @@ export class BatchManager {
             // Begin edit settings (required by Meshtastic before config changes)
             await this._beginEditSettings(device);
             
-            // Encode config(s) - may return multiple messages if both region and role are set
-            const protobufMessages = encodeMultipleConfigsToProtobuf(config);
+            // Check if this is a full config object (structured) or legacy format (flat)
+            let protobufMessages;
+            if (config.lora || config.device || config.display || config.network || config.bluetooth || config.position || config.power || config.modules) {
+                // Full config format - use encodeFullConfig
+                protobufMessages = encodeFullConfig(config);
+            } else {
+                // Legacy format - use encodeMultipleConfigsToProtobuf
+                protobufMessages = encodeMultipleConfigsToProtobuf(config);
+            }
             
             if (protobufMessages.length === 0) {
                 throw new Error('No valid config fields to encode');
@@ -966,35 +1081,6 @@ export class BatchManager {
         }
 
         this.logGlobal(`Injecting config to ${targetDevices.length} device(s)...`);
-        
-        const results = await Promise.allSettled(
-            targetDevices.map(d => this.injectConfig(d.id, config))
-        );
-
-        const successful = results.filter(r => r.status === 'fulfilled').length;
-        const failed = results.filter(r => r.status === 'rejected').length;
-
-        this.logGlobal(`Config injection complete: ${successful} success, ${failed} failed`);
-        return { successful, failed };
-    }
-
-    /**
-     * Inject configuration to selected devices only
-     */
-    async injectConfigSelected(config, deviceIds = null) {
-        const targetIds = deviceIds || Array.from(this.selectedDevices);
-        
-        if (targetIds.length === 0) {
-            throw new Error('No devices selected for config injection');
-        }
-
-        const targetDevices = this.devices.filter(d => targetIds.includes(d.id) && d.connectionType !== 'ota');
-        
-        if (targetDevices.length === 0) {
-            throw new Error('No valid devices selected for config injection');
-        }
-
-        this.logGlobal(`Injecting config to ${targetDevices.length} selected device(s)...`);
         
         const results = await Promise.allSettled(
             targetDevices.map(d => this.injectConfig(d.id, config))

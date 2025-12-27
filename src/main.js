@@ -113,31 +113,13 @@ window.selectBoard = async function(boardId) {
     // Close modal
     closeBoardSelector();
 
-    // Prompt for connection type
-    const connectionType = await promptConnectionType();
-    if (!connectionType) return;
+    // Show config form for this device
+    const config = await promptDeviceConfig(board);
+    if (!config) return; // User cancelled
 
-    try {
-        let device;
-        if (connectionType === 'usb') {
-            device = await manager.addDeviceUSB();
-        } else if (connectionType === 'ble') {
-            device = await manager.addDeviceBLE();
-        } else {
-            return; // User cancelled
-        }
-
-        // Store board type with device
-        device.boardType = boardId;
-        device.boardName = board.name;
-        device.boardVendor = board.vendor;
-        device.boardChip = board.chip;
-        device.boardIcon = board.icon;
-
-        render();
-    } catch (e) {
-        alert(`Failed to add device: ${e.message}`);
-    }
+    // Create disconnected placeholder device
+    const device = manager.addDisconnectedDevice(board, config);
+    render();
 };
 
 async function promptConnectionType() {
@@ -147,11 +129,134 @@ async function promptConnectionType() {
     });
 }
 
+// Configuration prompt for new device placeholder
+async function promptDeviceConfig(board) {
+    return new Promise((resolve) => {
+        // Create a modal for device configuration
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.style.display = 'flex';
+        
+        const deviceName = prompt(`Enter device name for ${board.name}:`, `NODE-${board.name.toUpperCase()}`);
+        if (!deviceName) {
+            resolve(null);
+            return;
+        }
+
+        // Use the existing config panel modal but customize it
+        const configModal = document.getElementById('configPanelModal');
+        if (configModal) {
+            // Update modal title
+            const header = configModal.querySelector('.modal-header h2');
+            if (header) header.textContent = `Configure ${board.name}`;
+            
+            // Show modal
+            configModal.style.display = 'flex';
+            
+            // Create a wrapper function to handle the config submission
+            const originalApply = window.applyConfigToAll;
+            window.applyConfigToAll = async function() {
+                const region = document.getElementById('region')?.value;
+                const channelName = document.getElementById('channelName')?.value;
+                const nodeRole = document.getElementById('nodeRole')?.value;
+                const modemPreset = document.getElementById('modemPreset')?.value;
+                const txPower = document.getElementById('txPower')?.value;
+                const hopLimit = document.getElementById('hopLimit')?.value;
+
+                if (!region || !channelName) {
+                    alert('Please fill in Region and Channel Name');
+                    return;
+                }
+
+                const config = {
+                    deviceName: deviceName,
+                    region: region,
+                    channelName: channelName,
+                    role: nodeRole
+                };
+
+                if (modemPreset) config.modemPreset = modemPreset;
+                if (txPower) config.txPower = parseInt(txPower, 10);
+                if (hopLimit) config.hopLimit = parseInt(hopLimit, 10);
+
+                // Restore original function
+                window.applyConfigToAll = originalApply;
+                
+                // Close modal
+                configModal.style.display = 'none';
+                
+                // Resolve with config
+                resolve(config);
+            };
+            
+            // Handle cancel/close
+            const closeBtn = configModal.querySelector('.modal-close');
+            const originalClose = closeBtn.onclick;
+            closeBtn.onclick = function() {
+                window.applyConfigToAll = originalApply;
+                configModal.style.display = 'none';
+                resolve(null);
+            };
+            
+            // Close on overlay click
+            configModal.onclick = function(e) {
+                if (e.target === configModal) {
+                    window.applyConfigToAll = originalApply;
+                    configModal.style.display = 'none';
+                    resolve(null);
+                }
+            };
+        } else {
+            // Fallback: use simple prompts
+            const region = prompt('Deployment Region (e.g., US, EU_868):', 'US');
+            if (!region) {
+                resolve(null);
+                return;
+            }
+            
+            const channelName = prompt('Primary Channel (e.g., LongFast):', 'LongFast');
+            if (!channelName) {
+                resolve(null);
+                return;
+            }
+            
+            const role = prompt('Node Role (e.g., ROUTER, CLIENT):', 'ROUTER') || 'ROUTER';
+            
+            resolve({
+                deviceName: deviceName,
+                region: region,
+                channelName: channelName,
+                role: role
+            });
+        }
+    });
+}
+
+// Connect Device Function
+window.connectDevice = async function(deviceId) {
+    const device = manager.devices.find(d => d.id === deviceId);
+    if (!device || device.status !== 'disconnected') return;
+    
+    const connectionType = await promptConnectionType();
+    if (!connectionType) return;
+    
+    try {
+        await manager.connectDevice(deviceId, connectionType);
+        render();
+    } catch (e) {
+        alert(`Failed to connect: ${e.message}`);
+    }
+};
+
 // Configuration Panel Functions
 window.openConfigPanel = function() {
     const modal = document.getElementById('configPanelModal');
     if (modal) {
         modal.style.display = 'flex';
+        // Reset to basic tab
+        switchConfigTab('basic');
+        // Update preset list
+        renderConfigPresets();
     }
 };
 
@@ -161,6 +266,49 @@ window.closeConfigPanel = function() {
         modal.style.display = 'none';
     }
 };
+
+// Configuration Tab Switching
+window.switchConfigTab = function(tabName) {
+    // Update tab buttons
+    document.querySelectorAll('.config-tab').forEach(tab => {
+        tab.classList.remove('active');
+        if (tab.dataset.tab === tabName) {
+            tab.classList.add('active');
+        }
+    });
+    
+    // Update tab panels
+    document.querySelectorAll('.config-tab-panel').forEach(panel => {
+        panel.classList.remove('active');
+        if (panel.id === `configTab-${tabName}`) {
+            panel.classList.add('active');
+        }
+    });
+    
+    // Update advanced settings visibility
+    const showAdvanced = document.getElementById('showAdvancedConfig')?.checked || false;
+    const modal = document.getElementById('configPanelModal');
+    if (showAdvanced) {
+        modal?.classList.add('show-advanced');
+    } else {
+        modal?.classList.remove('show-advanced');
+    }
+};
+
+// Advanced Settings Toggle
+document.addEventListener('DOMContentLoaded', () => {
+    const advancedToggle = document.getElementById('showAdvancedConfig');
+    if (advancedToggle) {
+        advancedToggle.addEventListener('change', (e) => {
+            const modal = document.getElementById('configPanelModal');
+            if (e.target.checked) {
+                modal?.classList.add('show-advanced');
+            } else {
+                modal?.classList.remove('show-advanced');
+            }
+        });
+    }
+});
 
 window.applyConfigToAll = async function() {
     const region = document.getElementById('region')?.value;
@@ -489,7 +637,8 @@ function render() {
     }
 
     // Update buttons
-    const hasDirectDevices = manager.devices.some(d => d.connectionType !== 'ota');
+    const hasDirectDevices = manager.devices.some(d => d.connectionType !== 'ota' && d.status !== 'disconnected');
+    const hasDisconnectedDevices = manager.devices.some(d => d.status === 'disconnected');
     const hasFirmware = manager.firmwareBinaries.length > 0 || manager.selectedRelease !== null;
     
     if (configureAllBtn) {
@@ -497,6 +646,13 @@ function render() {
     }
     if (flashAllBtn) {
         flashAllBtn.disabled = !hasDirectDevices || manager.isFlashing || !hasFirmware;
+    }
+    
+    // Update device count badge to show disconnected devices
+    if (deviceCountBadge && hasDisconnectedDevices) {
+        const connectedCount = manager.devices.filter(d => d.status !== 'disconnected').length;
+        const disconnectedCount = manager.devices.filter(d => d.status === 'disconnected').length;
+        deviceCountBadge.textContent = `${connectedCount} connected, ${disconnectedCount} pending`;
     }
 }
 

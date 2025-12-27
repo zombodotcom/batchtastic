@@ -73,83 +73,660 @@
 
 <!-- Configuration Panel Modal -->
 <div id="configPanelModal" class="modal-overlay" style="display: none;">
-    <div class="modal-content config-panel">
+    <div class="modal-content config-panel" style="max-width: 900px;">
         <div class="modal-header">
-            <h2>Configure All Devices</h2>
+            <h2 id="configPanelTitle">Configure All Devices</h2>
             <button class="modal-close" onclick="closeConfigPanel()">✕</button>
         </div>
         <div class="modal-body">
+            <!-- Presets Section -->
+            <div class="config-section" style="margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid #334155;">
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <select id="configPresetSelect" style="flex: 1;" onchange="loadConfigPreset(this.value)">
+                        <option value="">Load Preset...</option>
+                    </select>
+                    <button class="btn btn-secondary" onclick="saveCurrentConfigAsPreset()" style="margin: 0; padding: 0.5rem 1rem;">💾 Save as Preset</button>
+                    <button class="btn btn-secondary" onclick="exportCurrentConfig()" style="margin: 0; padding: 0.5rem 1rem;">📤 Export</button>
+                    <button class="btn btn-secondary" onclick="importConfig()" style="margin: 0; padding: 0.5rem 1rem;">📥 Import</button>
+                </div>
+                <label style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; font-size: 0.85rem;">
+                    <input type="checkbox" id="showAdvancedConfig">
+                    <span>Show Advanced Settings</span>
+                </label>
+            </div>
+
+            <!-- Configuration Tabs -->
+            <div class="config-tabs">
+                <button class="config-tab active" onclick="switchConfigTab('basic')" data-tab="basic">Basic</button>
+                <button class="config-tab" onclick="switchConfigTab('lora')" data-tab="lora">LoRa</button>
+                <button class="config-tab" onclick="switchConfigTab('device')" data-tab="device">Device</button>
+                <button class="config-tab" onclick="switchConfigTab('display')" data-tab="display">Display</button>
+                <button class="config-tab" onclick="switchConfigTab('network')" data-tab="network">Network</button>
+                <button class="config-tab" onclick="switchConfigTab('bluetooth')" data-tab="bluetooth">Bluetooth</button>
+                <button class="config-tab" onclick="switchConfigTab('position')" data-tab="position">Position</button>
+                <button class="config-tab" onclick="switchConfigTab('power')" data-tab="power">Power</button>
+                <button class="config-tab" onclick="switchConfigTab('modules')" data-tab="modules">Modules</button>
+        </div>
+
+            <!-- Tab Content -->
+            <div class="config-tab-content">
+                <!-- Basic Tab -->
+                <div id="configTab-basic" class="config-tab-panel active">
             <div class="form-group">
                 <label>Deployment Region</label>
                 <select id="region">
                     <option value="US">United States (915MHz)</option>
                     <option value="EU_868">Europe (868MHz)</option>
-                    <option value="EU_433">Europe (433MHz)</option>
-                    <option value="CN">China (470MHz)</option>
-                    <option value="JP">Japan (920MHz)</option>
-                    <option value="ANZ">Australia/New Zealand</option>
-                    <option value="KR">South Korea</option>
-                    <option value="TW">Taiwan</option>
-                    <option value="RU">Russia</option>
-                    <option value="IN">India</option>
-                    <option value="NZ_865">New Zealand (865MHz)</option>
-                    <option value="TH">Thailand</option>
-                    <option value="LORA_24">LoRa 2.4GHz</option>
-                    <option value="UA_433">Ukraine (433MHz)</option>
-                    <option value="UA_868">Ukraine (868MHz)</option>
-                    <option value="MY_433">Malaysia (433MHz)</option>
-                    <option value="MY_919">Malaysia (919MHz)</option>
-                    <option value="SG_923">Singapore (923MHz)</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label>Modem Preset</label>
-                <select id="modemPreset">
-                    <option value="">Default (use channel name)</option>
-                    <option value="LONG_FAST">Long Fast</option>
-                    <option value="LONG_SLOW">Long Slow</option>
-                    <option value="LONG_MODERATE">Long Moderate</option>
-                    <option value="MEDIUM_FAST">Medium Fast</option>
-                    <option value="MEDIUM_SLOW">Medium Slow</option>
-                    <option value="SHORT_FAST">Short Fast</option>
-                    <option value="SHORT_SLOW">Short Slow</option>
-                    <option value="VERY_LONG_SLOW">Very Long Slow</option>
+                            <option value="EU_433">Europe (433MHz)</option>
+                            <option value="CN">China (470MHz)</option>
+                            <option value="JP">Japan (920MHz)</option>
+                            <option value="ANZ">Australia/New Zealand</option>
+                            <option value="KR">South Korea</option>
+                            <option value="TW">Taiwan</option>
+                            <option value="RU">Russia</option>
+                            <option value="IN">India</option>
+                            <option value="NZ_865">New Zealand (865MHz)</option>
+                            <option value="TH">Thailand</option>
+                            <option value="LORA_24">LoRa 2.4GHz</option>
+                            <option value="UA_433">Ukraine (433MHz)</option>
+                            <option value="UA_868">Ukraine (868MHz)</option>
+                            <option value="MY_433">Malaysia (433MHz)</option>
+                            <option value="MY_919">Malaysia (919MHz)</option>
+                            <option value="SG_923">Singapore (923MHz)</option>
                 </select>
             </div>
             <div class="form-group">
                 <label>Primary Channel</label>
-                <input type="text" id="channelName" value="LongFast" placeholder="e.g., LongFast, MediumFast">
+                        <input type="text" id="channelName" value="LongFast" placeholder="e.g., LongFast, MediumFast">
+                    </div>
+                    <div class="form-group">
+                        <label>Modem Preset</label>
+                        <select id="modemPreset">
+                            <option value="">Default (use channel name)</option>
+                            <option value="LONG_FAST">Long Fast</option>
+                            <option value="LONG_SLOW">Long Slow</option>
+                            <option value="LONG_MODERATE">Long Moderate</option>
+                            <option value="MEDIUM_FAST">Medium Fast</option>
+                            <option value="MEDIUM_SLOW">Medium Slow</option>
+                            <option value="SHORT_FAST">Short Fast</option>
+                            <option value="SHORT_SLOW">Short Slow</option>
+                            <option value="VERY_LONG_SLOW">Very Long Slow</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Node Role</label>
+                        <select id="nodeRole">
+                            <option value="ROUTER">Router</option>
+                            <option value="CLIENT">Client</option>
+                            <option value="CLIENT_MUTE">Client Mute</option>
+                            <option value="TRACKER">Tracker</option>
+                            <option value="SENSOR">Sensor</option>
+                            <option value="TAK">TAK</option>
+                            <option value="CLIENT_HIDDEN">Client Hidden</option>
+                            <option value="LOST_AND_FOUND">Lost and Found</option>
+                            <option value="TAK_TRACKER">TAK Tracker</option>
+                            <option value="ROUTER_LATE">Router Late</option>
+                            <option value="CLIENT_BASE">Client Base</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>TX Power (dBm)</label>
+                        <input type="number" id="txPower" min="0" max="30" placeholder="Auto (leave empty)">
+                    </div>
+                    <div class="form-group">
+                        <label>Hop Limit</label>
+                        <input type="number" id="hopLimit" min="1" max="7" placeholder="Auto (leave empty)">
+                    </div>
+                </div>
+
+                <!-- LoRa Tab -->
+                <div id="configTab-lora" class="config-tab-panel">
+                    <div class="form-group">
+                        <label>Region</label>
+                        <select id="loraRegion">
+                            <option value="">Keep Current</option>
+                            <option value="US">United States (915MHz)</option>
+                            <option value="EU_868">Europe (868MHz)</option>
+                            <option value="EU_433">Europe (433MHz)</option>
+                            <option value="CN">China (470MHz)</option>
+                            <option value="JP">Japan (920MHz)</option>
+                            <option value="ANZ">Australia/New Zealand</option>
+                            <option value="KR">South Korea</option>
+                            <option value="TW">Taiwan</option>
+                            <option value="RU">Russia</option>
+                            <option value="IN">India</option>
+                            <option value="NZ_865">New Zealand (865MHz)</option>
+                            <option value="TH">Thailand</option>
+                            <option value="LORA_24">LoRa 2.4GHz</option>
+                            <option value="UA_433">Ukraine (433MHz)</option>
+                            <option value="UA_868">Ukraine (868MHz)</option>
+                            <option value="MY_433">Malaysia (433MHz)</option>
+                            <option value="MY_919">Malaysia (919MHz)</option>
+                            <option value="SG_923">Singapore (923MHz)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Modem Preset</label>
+                        <select id="loraModemPreset">
+                            <option value="">Keep Current</option>
+                            <option value="LONG_FAST">Long Fast</option>
+                            <option value="LONG_SLOW">Long Slow</option>
+                            <option value="LONG_MODERATE">Long Moderate</option>
+                            <option value="MEDIUM_FAST">Medium Fast</option>
+                            <option value="MEDIUM_SLOW">Medium Slow</option>
+                            <option value="SHORT_FAST">Short Fast</option>
+                            <option value="SHORT_SLOW">Short Slow</option>
+                            <option value="VERY_LONG_SLOW">Very Long Slow</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>TX Power (dBm)</label>
+                        <input type="number" id="loraTxPower" min="0" max="30" placeholder="Keep Current">
             </div>
             <div class="form-group">
-                <label>Node Role</label>
-                <select id="nodeRole">
-                    <option value="ROUTER">Router</option>
+                        <label>Hop Limit</label>
+                        <input type="number" id="loraHopLimit" min="1" max="7" placeholder="Keep Current">
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>TX Enabled</label>
+                        <select id="loraTxEnabled">
+                            <option value="">Keep Current</option>
+                            <option value="true">Enabled</option>
+                            <option value="false">Disabled</option>
+                        </select>
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>Bandwidth</label>
+                        <input type="number" id="loraBandwidth" placeholder="Keep Current">
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>Spread Factor</label>
+                        <input type="number" id="loraSpreadFactor" min="7" max="12" placeholder="Keep Current">
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>Coding Rate</label>
+                        <input type="number" id="loraCodingRate" min="5" max="8" placeholder="Keep Current">
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>Frequency Offset</label>
+                        <input type="number" id="loraFrequencyOffset" placeholder="Keep Current">
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>Channel Number</label>
+                        <input type="number" id="loraChannelNum" placeholder="Keep Current">
+                    </div>
+                </div>
+
+                <!-- Device Tab -->
+                <div id="configTab-device" class="config-tab-panel">
+                    <div class="form-group">
+                        <label>Role</label>
+                        <select id="deviceRole">
+                            <option value="">Keep Current</option>
+                            <option value="ROUTER">Router</option>
                     <option value="CLIENT">Client</option>
-                    <option value="CLIENT_MUTE">Client Mute</option>
-                    <option value="TRACKER">Tracker</option>
-                    <option value="SENSOR">Sensor</option>
-                    <option value="TAK">TAK</option>
-                    <option value="CLIENT_HIDDEN">Client Hidden</option>
-                    <option value="LOST_AND_FOUND">Lost and Found</option>
-                    <option value="TAK_TRACKER">TAK Tracker</option>
-                    <option value="ROUTER_LATE">Router Late</option>
-                    <option value="CLIENT_BASE">Client Base</option>
+                            <option value="CLIENT_MUTE">Client Mute</option>
+                            <option value="TRACKER">Tracker</option>
+                            <option value="SENSOR">Sensor</option>
+                            <option value="TAK">TAK</option>
+                            <option value="CLIENT_HIDDEN">Client Hidden</option>
+                            <option value="LOST_AND_FOUND">Lost and Found</option>
+                            <option value="TAK_TRACKER">TAK Tracker</option>
+                            <option value="ROUTER_LATE">Router Late</option>
+                            <option value="CLIENT_BASE">Client Base</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Serial Enabled</label>
+                        <select id="deviceSerialEnabled">
+                            <option value="">Keep Current</option>
+                            <option value="true">Enabled</option>
+                            <option value="false">Disabled</option>
+                        </select>
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>Debug Log Enabled</label>
+                        <select id="deviceDebugLogEnabled">
+                            <option value="">Keep Current</option>
+                            <option value="true">Enabled</option>
+                            <option value="false">Disabled</option>
+                        </select>
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>Button GPIO</label>
+                        <input type="number" id="deviceButtonGpio" placeholder="Keep Current">
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>Buzzer GPIO</label>
+                        <input type="number" id="deviceBuzzerGpio" placeholder="Keep Current">
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>Rebroadcast Mode</label>
+                        <select id="deviceRebroadcastMode">
+                            <option value="">Keep Current</option>
+                            <option value="ALL">All</option>
+                            <option value="ALL_SKIP_DC">All Skip DC</option>
+                            <option value="LOCAL_ONLY">Local Only</option>
+                        </select>
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>Node Info Broadcast Seconds</label>
+                        <input type="number" id="deviceNodeInfoBroadcastSecs" placeholder="Keep Current">
+                    </div>
+                </div>
+
+                <!-- Display Tab -->
+                <div id="configTab-display" class="config-tab-panel">
+                    <div class="form-group">
+                        <label>Screen On Seconds</label>
+                        <input type="number" id="displayScreenOnSecs" placeholder="Keep Current">
+                    </div>
+                    <div class="form-group">
+                        <label>GPS Format</label>
+                        <select id="displayGpsFormat">
+                            <option value="">Keep Current</option>
+                            <option value="DEC">Decimal</option>
+                            <option value="DMS">Degrees Minutes Seconds</option>
+                            <option value="UTM">UTM</option>
+                            <option value="MGRS">MGRS</option>
+                            <option value="OLC">Open Location Code</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Units</label>
+                        <select id="displayUnits">
+                            <option value="">Keep Current</option>
+                            <option value="METRIC">Metric</option>
+                            <option value="IMPERIAL">Imperial</option>
+                        </select>
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>Auto Screen Carousel Seconds</label>
+                        <input type="number" id="displayAutoScreenCarouselSecs" placeholder="Keep Current">
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>Compass North Top</label>
+                        <select id="displayCompassNorthTop">
+                            <option value="">Keep Current</option>
+                            <option value="true">Yes</option>
+                            <option value="false">No</option>
+                        </select>
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>Flip Screen</label>
+                        <select id="displayFlipScreen">
+                            <option value="">Keep Current</option>
+                            <option value="true">Yes</option>
+                            <option value="false">No</option>
+                        </select>
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>OLED Type</label>
+                        <select id="displayOledType">
+                            <option value="">Keep Current</option>
+                            <option value="OLED_AUTO">Auto</option>
+                            <option value="OLED_SSD1306">SSD1306</option>
+                            <option value="OLED_SH1106">SH1106</option>
+                        </select>
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>Display Mode</label>
+                        <select id="displayDisplayMode">
+                            <option value="">Keep Current</option>
+                            <option value="DEFAULT">Default</option>
+                            <option value="TWO_COLOR">Two Color</option>
+                            <option value="INVERTED">Inverted</option>
+                            <option value="COLOR">Color</option>
                 </select>
             </div>
+        </div>
+
+                <!-- Network Tab -->
+                <div id="configTab-network" class="config-tab-panel">
+                    <div class="form-group">
+                        <label>WiFi Enabled</label>
+                        <select id="networkWifiEnabled">
+                            <option value="">Keep Current</option>
+                            <option value="true">Enabled</option>
+                            <option value="false">Disabled</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>WiFi SSID</label>
+                        <input type="text" id="networkWifiSsid" placeholder="Keep Current">
+                    </div>
+                    <div class="form-group">
+                        <label>WiFi Password</label>
+                        <input type="password" id="networkWifiPsk" placeholder="Keep Current">
+                    </div>
             <div class="form-group">
-                <label>TX Power (dBm)</label>
-                <input type="number" id="txPower" min="0" max="30" placeholder="Auto (leave empty)">
+                        <label>NTP Server</label>
+                        <input type="text" id="networkNtpServer" placeholder="Keep Current">
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>Address Mode</label>
+                        <select id="networkAddressMode">
+                            <option value="">Keep Current</option>
+                            <option value="DHCP">DHCP</option>
+                            <option value="STATIC">Static</option>
+                </select>
             </div>
-            <div class="form-group">
-                <label>Hop Limit</label>
-                <input type="number" id="hopLimit" min="1" max="7" placeholder="Auto (leave empty)">
+                    <div class="form-group advanced-setting">
+                        <label>IP Address</label>
+                        <input type="text" id="networkIp" placeholder="Keep Current (e.g., 192.168.1.100)">
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>Gateway</label>
+                        <input type="text" id="networkGateway" placeholder="Keep Current (e.g., 192.168.1.1)">
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>Subnet</label>
+                        <input type="text" id="networkSubnet" placeholder="Keep Current (e.g., 255.255.255.0)">
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>DNS Server</label>
+                        <input type="text" id="networkDnsServer" placeholder="Keep Current">
+                    </div>
+        </div>
+
+                <!-- Bluetooth Tab -->
+                <div id="configTab-bluetooth" class="config-tab-panel">
+                    <div class="form-group">
+                        <label>Bluetooth Enabled</label>
+                        <select id="bluetoothEnabled">
+                            <option value="">Keep Current</option>
+                            <option value="true">Enabled</option>
+                            <option value="false">Disabled</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Pairing Pin</label>
+                        <input type="number" id="bluetoothPairingPin" min="0" max="999999" placeholder="Keep Current">
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>Fixed Pin</label>
+                        <input type="number" id="bluetoothFixedPin" min="0" max="999999" placeholder="Keep Current">
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>Mode</label>
+                        <select id="bluetoothMode">
+                            <option value="">Keep Current</option>
+                            <option value="RANDOM_PIN">Random Pin</option>
+                            <option value="FIXED_PIN">Fixed Pin</option>
+                            <option value="NO_PIN">No Pin</option>
+                        </select>
             </div>
-            <button class="btn btn-primary" onclick="applyConfigToAll()" style="width: 100%; margin-top: 1rem;">
-                ✅ Apply Configuration to All Devices
-            </button>
+        </div>
+
+                <!-- Position Tab -->
+                <div id="configTab-position" class="config-tab-panel">
+                    <div class="form-group">
+                        <label>GPS Enabled</label>
+                        <select id="positionGpsEnabled">
+                            <option value="">Keep Current</option>
+                            <option value="true">Enabled</option>
+                            <option value="false">Disabled</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Position Broadcast Seconds</label>
+                        <input type="number" id="positionBroadcastSecs" placeholder="Keep Current">
+                    </div>
+                    <div class="form-group">
+                        <label>Position Broadcast Smart Enabled</label>
+                        <select id="positionBroadcastSmartEnabled">
+                            <option value="">Keep Current</option>
+                            <option value="true">Enabled</option>
+                            <option value="false">Disabled</option>
+                        </select>
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>GPS Update Interval</label>
+                        <input type="number" id="positionGpsUpdateInterval" placeholder="Keep Current">
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>GPS Attempt Time</label>
+                        <input type="number" id="positionGpsAttemptTime" placeholder="Keep Current">
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>Fixed Position</label>
+                        <select id="positionFixedPosition">
+                            <option value="">Keep Current</option>
+                            <option value="true">Yes</option>
+                            <option value="false">No</option>
+                        </select>
+            </div>
+        </div>
+
+                <!-- Power Tab -->
+                <div id="configTab-power" class="config-tab-panel">
+                    <div class="form-group">
+                        <label>Power Saving Enabled</label>
+                        <select id="powerIsPowerSaving">
+                            <option value="">Keep Current</option>
+                            <option value="true">Enabled</option>
+                            <option value="false">Disabled</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Battery Shutdown After Seconds</label>
+                        <input type="number" id="powerOnBatteryShutdownAfterSecs" placeholder="Keep Current">
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>ADC Multiplier Override</label>
+                        <input type="number" id="powerAdcMultiplierOverride" step="0.01" placeholder="Keep Current">
+                    </div>
+                    <div class="form-group advanced-setting">
+                        <label>Wait Bluetooth Seconds</label>
+                        <input type="number" id="powerWaitBluetoothSecs" placeholder="Keep Current">
+                    </div>
+        </div>
+
+                <!-- Modules Tab -->
+                <div id="configTab-modules" class="config-tab-panel">
+                    <div class="module-section">
+                        <h3 style="font-size: 1rem; margin-bottom: 0.75rem; color: var(--accent);">Telemetry Module</h3>
+                        <div class="form-group">
+                            <label>Device Update Interval</label>
+                            <input type="number" id="moduleTelemetryDeviceUpdateInterval" placeholder="Keep Current">
+                        </div>
+                        <div class="form-group">
+                            <label>Environment Update Interval</label>
+                            <input type="number" id="moduleTelemetryEnvironmentUpdateInterval" placeholder="Keep Current">
+                        </div>
+                        <div class="form-group">
+                            <label>Environment Measurement Enabled</label>
+                            <select id="moduleTelemetryEnvironmentMeasurementEnabled">
+                                <option value="">Keep Current</option>
+                                <option value="true">Enabled</option>
+                                <option value="false">Disabled</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Power Measurement Enabled</label>
+                            <select id="moduleTelemetryPowerMeasurementEnabled">
+                                <option value="">Keep Current</option>
+                                <option value="true">Enabled</option>
+                                <option value="false">Disabled</option>
+                            </select>
+                        </div>
+                        <div class="form-group advanced-setting">
+                            <label>Environment Display Fahrenheit</label>
+                            <select id="moduleTelemetryEnvironmentDisplayFahrenheit">
+                                <option value="">Keep Current</option>
+                                <option value="true">Fahrenheit</option>
+                                <option value="false">Celsius</option>
+                            </select>
+                        </div>
+                        <div class="form-group advanced-setting">
+                            <label>Air Quality Enabled</label>
+                            <select id="moduleTelemetryAirQualityEnabled">
+                                <option value="">Keep Current</option>
+                                <option value="true">Enabled</option>
+                                <option value="false">Disabled</option>
+                            </select>
+            </div>
+        </div>
+
+                    <div class="module-section" style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid #334155;">
+                        <h3 style="font-size: 1rem; margin-bottom: 0.75rem; color: var(--accent);">Serial Module</h3>
+                        <div class="form-group">
+                            <label>Serial Enabled</label>
+                            <select id="moduleSerialEnabled">
+                                <option value="">Keep Current</option>
+                                <option value="true">Enabled</option>
+                                <option value="false">Disabled</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Baud Rate</label>
+                            <input type="number" id="moduleSerialBaud" placeholder="Keep Current (e.g., 115200)">
+                        </div>
+                        <div class="form-group advanced-setting">
+                            <label>Echo</label>
+                            <select id="moduleSerialEcho">
+                                <option value="">Keep Current</option>
+                                <option value="true">Enabled</option>
+                                <option value="false">Disabled</option>
+                            </select>
+                        </div>
+                        <div class="form-group advanced-setting">
+                            <label>RXD GPIO</label>
+                            <input type="number" id="moduleSerialRxd" placeholder="Keep Current">
+                        </div>
+                        <div class="form-group advanced-setting">
+                            <label>TXD GPIO</label>
+                            <input type="number" id="moduleSerialTxd" placeholder="Keep Current">
+                        </div>
+</div>
+
+                    <div class="module-section" style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid #334155;">
+                        <h3 style="font-size: 1rem; margin-bottom: 0.75rem; color: var(--accent);">External Notification Module</h3>
+                        <div class="form-group">
+                            <label>Enabled</label>
+                            <select id="moduleExternalNotificationEnabled">
+                                <option value="">Keep Current</option>
+                                <option value="true">Enabled</option>
+                                <option value="false">Disabled</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Output GPIO</label>
+                            <input type="number" id="moduleExternalNotificationOutput" placeholder="Keep Current">
+                        </div>
+                        <div class="form-group">
+                            <label>Output Duration (ms)</label>
+                            <input type="number" id="moduleExternalNotificationOutputMs" placeholder="Keep Current">
+                        </div>
+                        <div class="form-group advanced-setting">
+                            <label>LED Notification</label>
+                            <select id="moduleExternalNotificationNtfLed">
+                                <option value="">Keep Current</option>
+                                <option value="true">Enabled</option>
+                                <option value="false">Disabled</option>
+                            </select>
+                        </div>
+                        <div class="form-group advanced-setting">
+                            <label>Buzzer Notification</label>
+                            <select id="moduleExternalNotificationNtfBuzzer">
+                                <option value="">Keep Current</option>
+                                <option value="true">Enabled</option>
+                                <option value="false">Disabled</option>
+                            </select>
+                        </div>
+                        <div class="form-group advanced-setting">
+                            <label>Vibrate Notification</label>
+                            <select id="moduleExternalNotificationNtfVibrate">
+                                <option value="">Keep Current</option>
+                                <option value="true">Enabled</option>
+                                <option value="false">Disabled</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="module-section" style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid #334155;">
+                        <h3 style="font-size: 1rem; margin-bottom: 0.75rem; color: var(--accent);">Store & Forward Module</h3>
+                        <div class="form-group">
+                            <label>Enabled</label>
+                            <select id="moduleStoreForwardEnabled">
+                                <option value="">Keep Current</option>
+                                <option value="true">Enabled</option>
+                                <option value="false">Disabled</option>
+                            </select>
+                        </div>
+                        <div class="form-group advanced-setting">
+                            <label>Heartbeat</label>
+                            <select id="moduleStoreForwardHeartbeat">
+                                <option value="">Keep Current</option>
+                                <option value="true">Enabled</option>
+                                <option value="false">Disabled</option>
+                            </select>
+                        </div>
+                        <div class="form-group advanced-setting">
+                            <label>Records</label>
+                            <input type="number" id="moduleStoreForwardRecords" placeholder="Keep Current">
+                        </div>
+                    </div>
+                    
+                    <div class="module-section" style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid #334155;">
+                        <h3 style="font-size: 1rem; margin-bottom: 0.75rem; color: var(--accent);">Range Test Module</h3>
+                        <div class="form-group">
+                            <label>Enabled</label>
+                            <select id="moduleRangeTestEnabled">
+                                <option value="">Keep Current</option>
+                                <option value="true">Enabled</option>
+                                <option value="false">Disabled</option>
+                            </select>
+                        </div>
+                        <div class="form-group advanced-setting">
+                            <label>Sender</label>
+                            <select id="moduleRangeTestSender">
+                                <option value="">Keep Current</option>
+                                <option value="true">Yes</option>
+                                <option value="false">No</option>
+                            </select>
+                        </div>
+                        <div class="form-group advanced-setting">
+                            <label>Save</label>
+                            <select id="moduleRangeTestSave">
+                                <option value="">Keep Current</option>
+                                <option value="true">Yes</option>
+                                <option value="false">No</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="module-section" style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid #334155;">
+                        <h3 style="font-size: 1rem; margin-bottom: 0.75rem; color: var(--accent);">Canned Message Module</h3>
+                        <div class="form-group">
+                            <label>Enabled</label>
+                            <select id="moduleCannedMessageEnabled">
+                                <option value="">Keep Current</option>
+                                <option value="true">Enabled</option>
+                                <option value="false">Disabled</option>
+                            </select>
+                        </div>
+                        <div class="form-group advanced-setting">
+                            <label>Allow Input Source</label>
+                            <select id="moduleCannedMessageAllowInputSource">
+                                <option value="">Keep Current</option>
+                                <option value="KEYBOARD">Keyboard</option>
+                                <option value="ZPSK">ZPSK</option>
+                            </select>
+                        </div>
+                        </div>
+                        </div>
+                    </div>
+
+            <!-- Apply Button -->
+            <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #334155;">
+                <button class="btn btn-primary" onclick="applyConfigToAll()" style="width: 100%;">
+                    ✅ Apply Configuration to All Devices
+                </button>
+            </div>
         </div>
     </div>
-</div>
+                    </div>
 
 <!-- Firmware Selection Panel (Hidden, accessed via settings) -->
 <div id="firmwarePanel" style="display: none;">
@@ -185,8 +762,8 @@
         </label>
         <input type="file" id="customFile" accept=".bin,.zip" multiple style="margin-top: 0.5rem; display: none;">
         <div id="firmwareList" style="font-size: 0.7rem; color: var(--text-dim); margin-top: 0.5rem;"></div>
-    </div>
-</div>
+                    </div>
+                </div>
 
 <script type="module" src="./src/main.js"></script>
 
