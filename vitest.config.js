@@ -5,7 +5,8 @@ export default defineConfig({
     exclude: [
       '**/node_modules/**',
       '**/dist/**',
-      '**/_reference/**'  // Exclude cloned reference repos
+      '**/_reference/**',  // Exclude cloned reference repos
+      '**/tests/e2e/**'    // Exclude Playwright E2E tests
     ],
     coverage: {
       provider: 'v8',

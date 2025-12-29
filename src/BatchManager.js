@@ -517,7 +517,7 @@ export class BatchManager {
     }
 
     async addDevice(port) {
-        return this._createDevice(port, 'usb');
+        return this._createDevice(port, 'usb', { name: port?.name });
     }
 
     /**
@@ -1087,8 +1087,11 @@ export class BatchManager {
         }
         
         // Validate region
-        if (config.region && !['US', 'EU_868', 'EU_433', 'CN', 'JP', 'ANZ', 'KR', 'TW', 'RU', 'IN', 'NZ_865', 'TH', 'LORA_24', 'UA_433', 'UA_868', 'MY_433', 'MY_919', 'SG_923'].includes(config.region)) {
-            throw new Error(`Invalid region: ${config.region}`);
+        if (config.region) {
+            const validRegions = ['US', 'EU_868', 'EU_433', 'CN', 'JP', 'ANZ', 'KR', 'TW', 'RU', 'IN', 'NZ_865', 'TH', 'LORA_24', 'UA_433', 'UA_868', 'MY_433', 'MY_919', 'SG_923', 'TW_923', 'PH_923', 'SG_923', 'MY_923', 'TH_923'];
+            if (!validRegions.includes(config.region)) {
+                throw new Error(`Invalid region: ${config.region}`);
+            }
         }
         
         return true;
@@ -1146,7 +1149,7 @@ export class BatchManager {
         }
     }
 
-    async injectConfig(deviceId, config) {
+    async injectConfig(deviceId, config, skipHistory = false) {
         const device = this.devices.find(d => d.id === deviceId);
         if (!device) {
             throw new Error('Device not found');
@@ -1155,7 +1158,9 @@ export class BatchManager {
         this._validateConfig(config);
         
         // Save current config to history before applying
-        this._saveConfigHistory(deviceId, device.config || {});
+        if (!skipHistory) {
+            this._saveConfigHistory(deviceId, device.config || {});
+        }
         
         // Update device's config property (merge with existing)
         const mergedConfig = { ...(device.config || {}), ...config };
@@ -1218,6 +1223,36 @@ export class BatchManager {
         } catch (e) {
             this.log(device, `❌ Config injection failed: ${e.message}`);
             throw e;
+        }
+    }
+
+    /**
+     * Apply configuration to a single device (updates config property, may or may not inject)
+     * @param {string} deviceId - Device ID
+     * @param {Config|Object} config - Configuration object
+     * @param {boolean} [inject=false] - Whether to inject config to device immediately
+     * @returns {Promise<void>}
+     */
+    async applyConfigToDevice(deviceId, config, inject = false, skipHistory = false) {
+        const device = this.devices.find(d => d.id === deviceId);
+        if (!device) {
+            throw new Error('Device not found');
+        }
+
+        this._validateConfig(config);
+        
+        // Save current config to history
+        if (!skipHistory) {
+            this._saveConfigHistory(deviceId, device.config || {});
+        }
+        
+        // Update device's config property (merge with existing)
+        device.config = { ...(device.config || {}), ...config };
+        device.pendingConfig = device.config; // Update pendingConfig for backward compatibility
+        
+        // If device is connected and inject is true, inject config immediately
+        if (inject && device.connectionType !== 'ota' && device.status !== 'disconnected' && device.connection) {
+            await this.injectConfig(deviceId, config, skipHistory);
         }
     }
 
@@ -1330,7 +1365,13 @@ export class BatchManager {
      * Configuration Preset System
      */
     getConfigurationPresets() {
-        return getStorage('batchtastic_config_presets', []);
+        try {
+            const item = localStorage.getItem('batchtastic_config_presets');
+            return item ? JSON.parse(item) : [];
+        } catch (e) {
+            console.error('Failed to get presets from localStorage:', e);
+            return [];
+        }
     }
 
     /**
@@ -1342,13 +1383,18 @@ export class BatchManager {
     saveConfigurationPreset(name, config) {
         const presets = this.getConfigurationPresets();
         const preset = {
-            id: crypto.randomUUID(),
+            id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `preset-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             name: name,
-            config: config,
+            config: { ...config }, // Save a copy
             createdAt: new Date().toISOString()
         };
         presets.push(preset);
-        setStorage('batchtastic_config_presets', presets);
+        try {
+            localStorage.setItem('batchtastic_config_presets', JSON.stringify(presets));
+        } catch (e) {
+            console.error('Failed to save preset to localStorage:', e);
+            throw e; // Re-throw to allow callers to handle errors
+        }
         return preset;
     }
 
@@ -1414,7 +1460,8 @@ export class BatchManager {
                 const device = this.devices.find(d => d.id === data.deviceId);
                 if (!device) throw new Error('Device not found');
                 device.pendingConfig = data.config;
-                return { deviceId: data.deviceId };
+                device.config = data.config; // Also update config property
+                return { deviceId: data.deviceId, config: data.config };
             } else if (data.devices) {
                 // Bulk import
                 const results = [];
@@ -1422,6 +1469,7 @@ export class BatchManager {
                     const device = this.devices.find(d => d.id === deviceData.deviceId);
                     if (device) {
                         device.pendingConfig = deviceData.config;
+                        device.config = deviceData.config; // Also update config property
                         results.push(deviceData.deviceId);
                     }
                 }
@@ -2063,9 +2111,9 @@ export class BatchManager {
         
         // Apply previous config
         const shouldInject = device.connectionType !== 'ota' && device.status !== 'disconnected' && device.connection;
-        await this.applyConfigToDevice(deviceId, previousConfig, shouldInject);
+        await this.applyConfigToDevice(deviceId, previousConfig, shouldInject, true);
         
-        // Remove the last history entry (since we just applied it)
+        // Remove the last history entry
         device.configHistory.pop();
         
         this.logGlobal(`Config undone for ${device.name}`);
@@ -2092,7 +2140,7 @@ export class BatchManager {
         
         // Apply the config
         const shouldInject = device.connectionType !== 'ota' && device.status !== 'disconnected' && device.connection;
-        await this.applyConfigToDevice(deviceId, configToRestore, shouldInject);
+        await this.applyConfigToDevice(deviceId, configToRestore, shouldInject, true);
         
         this.logGlobal(`Config restored from history for ${device.name}`);
     }

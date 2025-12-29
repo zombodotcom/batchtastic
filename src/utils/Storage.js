@@ -15,7 +15,14 @@ export function getStorage(key, defaultValue = null) {
             return defaultValue;
         }
         const item = localStorage.getItem(key);
-        return item ? JSON.parse(item) : defaultValue;
+        if (!item) return defaultValue;
+        
+        try {
+            return JSON.parse(item);
+        } catch (parseError) {
+            console.warn(`Failed to parse storage key "${key}":`, parseError);
+            return defaultValue;
+        }
     } catch (e) {
         console.warn(`Failed to get storage key "${key}":`, e);
         return defaultValue;
@@ -36,6 +43,7 @@ export function setStorage(key, value) {
         localStorage.setItem(key, JSON.stringify(value));
     } catch (e) {
         console.warn(`Failed to set storage key "${key}":`, e);
+        throw e;
     }
 }
 

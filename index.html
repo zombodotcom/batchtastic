@@ -16,7 +16,7 @@
             <button class="btn btn-primary" id="addDeviceBtn" onclick="openBoardSelector()">
                 ➕ Add Device
             </button>
-            <button class="btn btn-secondary" id="configureAllBtn" onclick="openConfigPanel()" disabled>
+            <button class="btn btn-secondary" id="applyProfileBtn" data-testid="configure-all-btn" onclick="openConfigPanel()" disabled>
                 ⚙️ Configure All
             </button>
             <button class="btn btn-success" id="flashAllBtn" onclick="flashAllDevices()" disabled>
@@ -29,6 +29,51 @@
 
 <!-- Main Content -->
 <main class="main-content">
+    <!-- Firmware Selection Panel -->
+    <div id="firmwarePanel" style="margin-bottom: 2rem;">
+        <div class="card">
+            <h2>📂 Firmware & Platform</h2>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                <div class="form-group">
+                    <label>Release Channel</label>
+                    <select id="releaseChannel">
+                        <option value="stable">Stable</option>
+                        <option value="alpha">Alpha</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Firmware Version</label>
+                    <select id="firmwareType">
+                        <option value="custom">Custom .bin Files</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Target Platform</label>
+                    <select id="targetPlatform">
+                        <option value="tbeam" selected>T-Beam</option>
+                        <option value="tbeam-s3-core">T-Beam S3</option>
+                        <option value="tlora-v2">T-LoRa V2</option>
+                        <option value="heltec-v3">Heltec V3</option>
+                        <option value="rak4631">RAK4631</option>
+                        <option value="t-deck">T-Deck</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Options</label>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" id="fullInstall">
+                        <span style="color: var(--error); font-size: 0.85rem; font-weight: 600;">Full Install (Erase All)</span>
+                    </label>
+                </div>
+            </div>
+            <input type="file" id="customFile" accept=".bin,.zip" multiple style="margin-top: 0.5rem; display: none;">
+            <div id="firmwareList" style="font-size: 0.7rem; color: var(--text-dim); margin-top: 0.5rem;"></div>
+        </div>
+    </div>
+
+    <!-- Fleet Mission Control Dashboard -->
+    <div id="fleetDashboard" class="fleet-dashboard" style="margin-bottom: 2rem;"></div>
+
     <!-- Search and Filter Bar -->
     <div class="search-filter-bar" style="margin-bottom: 1rem; padding: 1rem; background: var(--bg-secondary); border-radius: 0.5rem;">
         <div style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;">
@@ -127,9 +172,9 @@
                     <select id="configPresetSelect" style="flex: 1;" onchange="loadConfigPreset(this.value)">
                         <option value="">Load Preset...</option>
                     </select>
-                    <button class="btn btn-secondary" onclick="saveCurrentConfigAsPreset()" style="margin: 0; padding: 0.5rem 1rem;">💾 Save as Preset</button>
-                    <button class="btn btn-secondary" onclick="exportCurrentConfig()" style="margin: 0; padding: 0.5rem 1rem;">📤 Export</button>
-                    <button class="btn btn-secondary" onclick="importConfig()" style="margin: 0; padding: 0.5rem 1rem;">📥 Import</button>
+                    <button id="savePresetBtn" class="btn btn-secondary" data-testid="save-preset-btn" onclick="saveCurrentConfigAsPreset()" style="margin: 0; padding: 0.5rem 1rem;">💾 Save as Preset</button>
+                    <button id="exportConfigBtn" class="btn btn-secondary" data-testid="export-config-btn" onclick="exportCurrentConfig()" style="margin: 0; padding: 0.5rem 1rem;">📤 Export</button>
+                    <button id="importConfigBtn" class="btn btn-secondary" data-testid="import-config-btn" onclick="importConfig()" style="margin: 0; padding: 0.5rem 1rem;">📥 Import</button>
                 </div>
                 <label style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; font-size: 0.85rem;">
                     <input type="checkbox" id="showAdvancedConfig">
@@ -685,7 +730,7 @@
                             </select>
                         </div>
                     </div>
-
+                    
                     <div class="module-section" style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid #334155;">
                         <h3 style="font-size: 1rem; margin-bottom: 0.75rem; color: var(--accent);">Store & Forward Module</h3>
                         <div class="form-group">
@@ -709,7 +754,7 @@
                             <input type="number" id="moduleStoreForwardRecords" placeholder="Keep Current">
                         </div>
                     </div>
-                    
+
                     <div class="module-section" style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid #334155;">
                         <h3 style="font-size: 1rem; margin-bottom: 0.75rem; color: var(--accent);">Range Test Module</h3>
                         <div class="form-group">
@@ -767,43 +812,6 @@
                 </button>
             </div>
         </div>
-    </div>
-                    </div>
-
-<!-- Firmware Selection Panel (Hidden, accessed via settings) -->
-<div id="firmwarePanel" style="display: none;">
-    <div class="card">
-        <h2>📂 Firmware & Platform</h2>
-        <div class="form-group">
-            <label>Release Channel</label>
-            <select id="releaseChannel">
-                <option value="stable">Stable</option>
-                <option value="alpha">Alpha</option>
-            </select>
-        </div>
-        <div class="form-group">
-            <label>Firmware Version</label>
-            <select id="firmwareType">
-                <option value="custom">Custom .bin Files</option>
-            </select>
-        </div>
-        <div class="form-group">
-            <label>Target Platform</label>
-            <select id="targetPlatform">
-                <option value="tbeam" selected>T-Beam</option>
-                <option value="tbeam-s3-core">T-Beam S3</option>
-                <option value="tlora-v2">T-LoRa V2</option>
-                <option value="heltec-v3">Heltec V3</option>
-                <option value="rak4631">RAK4631</option>
-                <option value="t-deck">T-Deck</option>
-            </select>
-        </div>
-        <label style="display: flex; align-items: center; gap: 0.5rem; margin: 0.5rem 0; font-size: 0.85rem;">
-            <input type="checkbox" id="fullInstall">
-            <span style="color: var(--error);">Full Install (Erase All)</span>
-        </label>
-        <input type="file" id="customFile" accept=".bin,.zip" multiple style="margin-top: 0.5rem; display: none;">
-        <div id="firmwareList" style="font-size: 0.7rem; color: var(--text-dim); margin-top: 0.5rem;"></div>
                     </div>
                 </div>
 

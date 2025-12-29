@@ -35,9 +35,13 @@ Object.defineProperty(global, 'navigator', {
 });
 
 // Mock crypto.randomUUID
+let uuidCounter = 0;
 Object.defineProperty(global, 'crypto', {
     value: {
-        randomUUID: () => '12345678-1234-1234-1234-123456789abc'
+        randomUUID: () => {
+            uuidCounter++;
+            return `1234567${uuidCounter}-1234-1234-1234-123456789abc`;
+        }
     },
     writable: true,
     configurable: true
@@ -273,11 +277,11 @@ describe('BatchManager Configuration', () => {
             expect(device.pendingConfig).toEqual({ lora: { region: 'EU_868' } });
         });
 
-        it('should import configuration for multiple devices', () => {
+        it('should import configuration for multiple devices', async () => {
             const mockPort1 = { name: 'MockPort1' };
             const mockPort2 = { name: 'MockPort2' };
-            manager.addDevice(mockPort1);
-            manager.addDevice(mockPort2);
+            await manager.addDevice(mockPort1);
+            await manager.addDevice(mockPort2);
             
             const configJson = JSON.stringify({
                 devices: [
@@ -448,6 +452,9 @@ describe('BatchManager Configuration', () => {
             
             await manager.addDevice(mockPort1);
             await manager.addDevice(mockPort2);
+            
+            // Ensure no devices are selected
+            manager.deselectAll();
             
             const config = {
                 lora: { region: 'US' }

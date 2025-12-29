@@ -38,9 +38,13 @@ Object.defineProperty(global, 'navigator', {
 });
 
 // Mock crypto.randomUUID
+let uuidCounter = 0;
 Object.defineProperty(global, 'crypto', {
     value: {
-        randomUUID: () => '12345678-1234-1234-1234-123456789abc'
+        randomUUID: () => {
+            uuidCounter++;
+            return `1234567${uuidCounter}-1234-1234-1234-123456789abc`;
+        }
     },
     writable: true,
     configurable: true

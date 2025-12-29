@@ -2,7 +2,7 @@ import { BatchManager } from './BatchManager.js';
 import { renderSNRChart, renderAirUtilChart } from './ChartRenderer.js';
 import { startTelemetryUpdates } from './TelemetrySimulator.js';
 import { PacketRain } from './PacketRain.js';
-import { createModal, showPrompt, showConfirm, getElement, getValue } from './utils/DOMHelpers.js';
+import { createModal, showPrompt, showConfirm, showAlert, getElement, getValue } from './utils/DOMHelpers.js';
 
 const manager = new BatchManager();
 
@@ -371,10 +371,16 @@ window.connectDevice = async function(deviceId) {
 window.openConfigPanel = function(deviceId = null) {
     const modal = document.getElementById('configPanelModal');
     if (!modal) return;
-    
+
     // Store the target device ID (null = all devices)
     modal.dataset.targetDeviceId = deviceId || '';
     
+    // Update export button to know about the device
+    const exportBtn = document.querySelector('[data-testid="export-config-btn"]');
+    if (exportBtn) {
+        exportBtn.dataset.deviceId = deviceId || '';
+    }
+
     // Update modal title
     const header = modal.querySelector('.modal-header h2');
     if (header) {
@@ -385,7 +391,7 @@ window.openConfigPanel = function(deviceId = null) {
             header.textContent = 'Configure All Devices';
         }
     }
-    
+
     // Update apply button text
     const applyBtn = document.getElementById('applyConfigBtn');
     if (applyBtn) {
@@ -398,7 +404,7 @@ window.openConfigPanel = function(deviceId = null) {
             applyBtn.textContent = '✅ Apply Configuration to All Devices';
         }
     }
-    
+
     // Load device's current config if configuring single device
     if (deviceId) {
         const device = manager.devices.find(d => d.id === deviceId);
@@ -459,14 +465,12 @@ window.openConfigPanel = function(deviceId = null) {
         const hopLimitEl = document.getElementById('hopLimit');
         if (hopLimitEl) hopLimitEl.value = '';
     }
-    
+
     // Reset to basic tab
     switchConfigTab('basic');
     // Update preset list
-    if (typeof renderConfigPresets === 'function') {
-        renderConfigPresets();
-    }
-    
+    renderConfigPresets();
+
     modal.style.display = 'flex';
 };
 
@@ -727,30 +731,6 @@ if (controlsCard) {
 const flashAllBtn = document.getElementById('flashAllBtn');
 const otaBtn = document.getElementById('otaBtn');
 
-function updateButtons() {
-    const hasDirectDevices = manager.devices.some(d => d.connectionType !== 'ota');
-    const hasOTATargets = manager.devices.some(d => d.connectionType === 'ota');
-    const hasGateway = manager.otaGateway !== null;
-    const hasFirmware = manager.firmwareBinaries.length > 0 || manager.selectedRelease !== null;
-    const selectedCount = manager.getSelectionCount();
-    const applyProfileBtn = document.getElementById('applyProfileBtn');
-    
-    if (flashAllBtn) {
-        flashAllBtn.disabled = !hasDirectDevices || manager.isFlashing || !hasFirmware;
-    }
-    if (otaBtn) {
-        otaBtn.disabled = !hasOTATargets || !hasGateway || manager.isFlashing || !hasFirmware;
-    }
-    if (applyProfileBtn) {
-        // Update button text based on selection
-        if (selectedCount > 0) {
-            applyProfileBtn.textContent = `⚙️ Apply to ${selectedCount} Selected`;
-        } else {
-            applyProfileBtn.textContent = '⚙️ Apply to All Devices';
-        }
-    }
-}
-
 // Flash All USB Handler (REAL FLASHING)
 if (flashAllBtn) {
     flashAllBtn.onclick = async () => {
@@ -813,11 +793,128 @@ manager.addDeviceOTA = async function(...args) {
     return device;
 };
 
+function renderDashboard() {
+    const dashboard = document.getElementById('fleetDashboard');
+    if (!dashboard) return;
+
+    const devices = manager.devices;
+    const totalDevices = devices.length;
+    
+    if (totalDevices === 0) {
+        dashboard.innerHTML = '';
+        return;
+    }
+
+    // Calculate Fleet Health (% ready)
+    const readyDevices = devices.filter(d => d.status === 'ready').length;
+    const healthPercent = totalDevices > 0 ? Math.round((readyDevices / totalDevices) * 100) : 0;
+    const healthClass = healthPercent >= 80 ? 'success' : healthPercent >= 50 ? 'warning' : 'error';
+
+    // Calculate Battery Watch
+    const devicesWithBattery = devices.filter(d => d.telemetry && d.telemetry.batt && d.telemetry.batt !== '--');
+    const batteryValues = devicesWithBattery.map(d => parseFloat(d.telemetry.batt));
+    const avgBattery = batteryValues.length > 0 
+        ? (batteryValues.reduce((a, b) => a + b, 0) / batteryValues.length).toFixed(2)
+        : '--';
+    const lowBatteryCount = batteryValues.filter(b => b < 3.5).length;
+    const batteryClass = lowBatteryCount === 0 ? 'success' : lowBatteryCount <= 2 ? 'warning' : 'error';
+
+    // Calculate Signal Strength (Average SNR)
+    const devicesWithSNR = devices.filter(d => d.telemetry && d.telemetry.snr && d.telemetry.snr !== '--');
+    const snrValues = devicesWithSNR.map(d => parseFloat(d.telemetry.snr));
+    const avgSNR = snrValues.length > 0
+        ? (snrValues.reduce((a, b) => a + b, 0) / snrValues.length).toFixed(1)
+        : '--';
+    const snrClass = avgSNR !== '--' && parseFloat(avgSNR) > 0 ? 'success' : 'warning';
+
+    // Get recent global events (last 3)
+    const recentEvents = manager.globalLogs.slice(0, 3);
+
+    dashboard.innerHTML = `
+        <div class="dash-card ${healthClass}" data-filter-action="ready" title="Click to filter ready devices">
+            <div class="dash-label">Fleet Health</div>
+            <div class="dash-value">
+                ${healthPercent}<span class="dash-unit">%</span>
+            </div>
+            <div class="dash-subtext">
+                <span class="status-indicator ${healthClass === 'success' ? 'pulse-animation' : ''}" style="background: ${healthClass === 'success' ? 'var(--success)' : healthClass === 'warning' ? '#f59e0b' : 'var(--error)'};"></span>
+                ${readyDevices} of ${totalDevices} ready
+            </div>
+        </div>
+
+        <div class="dash-card ${batteryClass}" data-filter-action="low-battery" title="Click to filter low battery devices">
+            <div class="dash-label">Battery Watch</div>
+            <div class="dash-value">
+                ${avgBattery}<span class="dash-unit">V</span>
+            </div>
+            <div class="dash-subtext">
+                <span class="status-indicator ${batteryClass === 'error' ? 'pulse-animation' : ''}" style="background: ${batteryClass === 'success' ? 'var(--success)' : batteryClass === 'warning' ? '#f59e0b' : 'var(--error)'};"></span>
+                ${lowBatteryCount > 0 ? `${lowBatteryCount} low` : 'All good'}
+            </div>
+        </div>
+
+        <div class="dash-card ${snrClass}" title="Average signal strength">
+            <div class="dash-label">Signal Strength</div>
+            <div class="dash-value">
+                ${avgSNR}<span class="dash-unit">dB</span>
+            </div>
+            <div class="dash-subtext">
+                <span class="status-indicator" style="background: ${snrClass === 'success' ? 'var(--success)' : '#f59e0b'};"></span>
+                Average SNR
+            </div>
+        </div>
+
+        <div class="dash-card" style="grid-column: span 1;">
+            <div class="dash-label">Recent Activity</div>
+            <div class="event-ticker">
+                ${recentEvents.length > 0 
+                    ? recentEvents.map(log => {
+                        const parts = log.match(/^\[([^\]]+)\]\s*(.+)$/);
+                        const timestamp = parts ? parts[1] : '';
+                        const message = parts ? parts[2] : log;
+                        return `
+                            <div class="ticker-item">
+                                <span class="ticker-timestamp">${timestamp}</span>
+                                <span class="ticker-msg">${message}</span>
+                            </div>
+                        `;
+                    }).join('')
+                    : '<div class="ticker-item"><span class="ticker-msg">No recent activity</span></div>'
+                }
+            </div>
+        </div>
+    `;
+
+    // Add click handlers for interactive filtering
+    dashboard.querySelectorAll('[data-filter-action]').forEach(card => {
+        card.addEventListener('click', () => {
+            const action = card.dataset.filterAction;
+            if (action === 'ready') {
+                const statusFilter = document.getElementById('statusFilter');
+                if (statusFilter) {
+                    statusFilter.value = 'ready';
+                    filterDevices();
+                }
+            } else if (action === 'low-battery') {
+                // Filter devices with low battery (< 3.5V)
+                const searchInput = document.getElementById('deviceSearch');
+                if (searchInput) {
+                    searchInput.value = 'low-battery';
+                    filterDevices();
+                }
+            }
+        });
+    });
+}
+
 function render() {
+    // Render dashboard first
+    renderDashboard();
+
     const deviceGrid = document.getElementById('deviceGrid');
     const emptyState = document.getElementById('emptyState');
     const deviceCountBadge = document.getElementById('deviceCountBadge');
-    const configureAllBtn = document.getElementById('configureAllBtn');
+    const applyProfileBtn = document.getElementById('applyProfileBtn');
     const flashAllBtn = document.getElementById('flashAllBtn');
     
     if (!deviceGrid) return;
@@ -835,6 +932,7 @@ function render() {
             
             return `
             <div class="device-card ${d.status === 'active' ? 'flashing' : ''} ${isSelected ? 'device-selected' : ''} ${isReady ? 'device-ready' : ''}" 
+                 data-device-id="${d.id}"
                  style="${manager.otaGateway?.id === d.id ? 'border: 2px solid var(--accent);' : ''}">
                 <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
                     <div style="flex: 1;">
@@ -882,6 +980,7 @@ function render() {
                         <div style="margin-top: 0.5rem;">
                             <button onclick="openConfigPanel('${d.id}')" 
                                     class="btn btn-secondary" 
+                                    data-testid="configure-device-btn"
                                     style="font-size: 0.85rem; padding: 0.4rem 0.8rem; width: 100%;"
                                     ${manager.isFlashing ? 'disabled' : ''}>
                                 ⚙️ Configure
@@ -923,8 +1022,14 @@ function render() {
     const hasDisconnectedDevices = manager.devices.some(d => d.status === 'disconnected');
     const hasFirmware = manager.firmwareBinaries.length > 0 || manager.selectedRelease !== null;
     
-    if (configureAllBtn) {
-        configureAllBtn.disabled = !hasDirectDevices || manager.isFlashing;
+    if (applyProfileBtn) {
+        applyProfileBtn.disabled = manager.devices.length === 0 || manager.isFlashing;
+        const selectedCount = manager.getSelectionCount();
+        if (selectedCount > 0) {
+            applyProfileBtn.textContent = `⚙️ Configure ${selectedCount} Selected`;
+        } else {
+            applyProfileBtn.textContent = '⚙️ Configure All';
+        }
     }
     if (flashAllBtn) {
         flashAllBtn.disabled = !hasDirectDevices || manager.isFlashing || !hasFirmware;
@@ -936,6 +1041,9 @@ function render() {
         const disconnectedCount = manager.devices.filter(d => d.status === 'disconnected').length;
         deviceCountBadge.textContent = `${connectedCount} connected, ${disconnectedCount} pending`;
     }
+
+    // Apply filters
+    filterDevices();
 }
 
 function updateBatchStatus() {
@@ -1175,8 +1283,271 @@ render = function() {
 };
 window.render = render; // Update global reference
 
-// Initialize board grid on load
+/**
+ * Render config presets dropdown
+ */
+window.renderConfigPresets = function() {
+    const presetSelect = document.getElementById('configPresetSelect');
+    if (!presetSelect) return;
+    
+    const presets = manager.getConfigurationPresets();
+    const currentValue = presetSelect.value;
+    
+    presetSelect.innerHTML = '<option value="">Load Preset...</option>';
+    presets.forEach(preset => {
+        const option = document.createElement('option');
+        option.value = preset.id;
+        option.textContent = preset.name;
+        presetSelect.appendChild(option);
+    });
+    
+    // Restore selection if still valid
+    if (currentValue && presets.find(p => p.id === currentValue)) {
+        presetSelect.value = currentValue;
+    }
+};
+
+/**
+ * Load a config preset into the form
+ */
+window.loadConfigPreset = function(presetId) {
+    if (!presetId) return;
+    
+    try {
+        const config = manager.loadConfigurationPreset(presetId);
+        
+        // Load config into form fields
+        if (config.region) {
+            const regionEl = document.getElementById('region');
+            if (regionEl) regionEl.value = config.region;
+        }
+        if (config.channelName) {
+            const channelEl = document.getElementById('channelName');
+            if (channelEl) channelEl.value = config.channelName;
+        }
+        if (config.role) {
+            const roleEl = document.getElementById('nodeRole');
+            if (roleEl) roleEl.value = config.role;
+        }
+        if (config.modemPreset) {
+            const presetEl = document.getElementById('modemPreset');
+            if (presetEl) presetEl.value = config.modemPreset;
+        }
+        if (config.txPower !== undefined) {
+            const txPowerEl = document.getElementById('txPower');
+            if (txPowerEl) txPowerEl.value = config.txPower;
+        }
+        if (config.hopLimit !== undefined) {
+            const hopLimitEl = document.getElementById('hopLimit');
+            if (hopLimitEl) hopLimitEl.value = config.hopLimit;
+        }
+    } catch (e) {
+        alert(`Failed to load preset: ${e.message}`);
+    }
+};
+
+/**
+ * Save current config form as a preset
+ */
+window.saveCurrentConfigAsPreset = async function() {
+    const name = await showPrompt('Enter preset name:', 'My Preset');
+    if (!name) return;
+    
+    // Read current form values
+    const region = document.getElementById('region')?.value;
+    const channelName = document.getElementById('channelName')?.value;
+    const nodeRole = document.getElementById('nodeRole')?.value;
+    const modemPreset = document.getElementById('modemPreset')?.value;
+    const txPower = document.getElementById('txPower')?.value;
+    const hopLimit = document.getElementById('hopLimit')?.value;
+    
+    const config = {};
+    if (region && region !== '') config.region = region;
+    if (channelName && channelName !== '') config.channelName = channelName;
+    if (nodeRole && nodeRole !== '') config.role = nodeRole;
+    if (modemPreset && modemPreset !== '') config.modemPreset = modemPreset;
+    if (txPower && txPower !== '') config.txPower = parseInt(txPower, 10);
+    if (hopLimit && hopLimit !== '') config.hopLimit = parseInt(hopLimit, 10);
+    
+    try {
+        manager.saveConfigurationPreset(name, config);
+        if (!window.IS_TEST) {
+            await showAlert(`Preset "${name}" saved successfully`);
+        }
+        renderConfigPresets();
+    } catch (e) {
+        alert(`Failed to save preset: ${e.message}`);
+    }
+};
+
+/**
+ * Export current config to JSON file
+ */
+window.exportCurrentConfig = function() {
+    const modal = document.getElementById('configPanelModal');
+    if (!modal) return;
+    
+    // Check both modal and button for the device ID
+    const exportBtn = document.querySelector('[data-testid="export-config-btn"]');
+    let targetDeviceId = modal.dataset.targetDeviceId || exportBtn?.dataset.deviceId || '';
+    if (targetDeviceId === 'null' || targetDeviceId === 'undefined') targetDeviceId = '';
+    
+    // Read current form values
+    const region = document.getElementById('region')?.value;
+    const channelName = document.getElementById('channelName')?.value;
+    const nodeRole = document.getElementById('nodeRole')?.value;
+    const modemPreset = document.getElementById('modemPreset')?.value;
+    const txPower = document.getElementById('txPower')?.value;
+    const hopLimit = document.getElementById('hopLimit')?.value;
+    
+    const config = {};
+    if (region && region !== '') config.region = region;
+    if (channelName && channelName !== '') config.channelName = channelName;
+    if (nodeRole && nodeRole !== '') config.role = nodeRole;
+    if (modemPreset && modemPreset !== '') config.modemPreset = modemPreset;
+    if (txPower && txPower !== '') config.txPower = parseInt(txPower, 10);
+    if (hopLimit && hopLimit !== '') config.hopLimit = parseInt(hopLimit, 10);
+    
+    try {
+        const exportData = {
+            config: config,
+            exportedAt: new Date().toISOString()
+        };
+        
+        if (targetDeviceId && targetDeviceId !== '') {
+            exportData.deviceId = targetDeviceId;
+            const device = manager.devices.find(d => d.id === targetDeviceId);
+            if (device) {
+                exportData.deviceName = device.name;
+            }
+        }
+        
+        const json = JSON.stringify(exportData, null, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const filename = (targetDeviceId && targetDeviceId !== '') ? `device-config-${targetDeviceId}.json` : `batch-config-${Date.now()}.json`;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+        alert(`Export failed: ${e.message}`);
+    }
+};
+
+/**
+ * Import config from JSON file
+ */
+window.importConfig = function() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        try {
+            const text = await file.text();
+            const data = manager.importConfiguration(text);
+            
+            // Load imported config into form
+            const config = data.config || data;
+            if (config.region) {
+                const regionEl = document.getElementById('region');
+                if (regionEl) regionEl.value = config.region;
+            }
+            if (config.channelName) {
+                const channelEl = document.getElementById('channelName');
+                if (channelEl) channelEl.value = config.channelName;
+            }
+            if (config.role) {
+                const roleEl = document.getElementById('nodeRole');
+                if (roleEl) roleEl.value = config.role;
+            }
+            if (config.modemPreset) {
+                const presetEl = document.getElementById('modemPreset');
+                if (presetEl) presetEl.value = config.modemPreset;
+            }
+            if (config.txPower !== undefined) {
+                const txPowerEl = document.getElementById('txPower');
+                if (txPowerEl) txPowerEl.value = config.txPower;
+            }
+            if (config.hopLimit !== undefined) {
+                const hopLimitEl = document.getElementById('hopLimit');
+                if (hopLimitEl) hopLimitEl.value = config.hopLimit;
+            }
+            
+            await showAlert('Config imported successfully');
+        } catch (e) {
+            alert(`Import failed: ${e.message}`);
+        }
+    };
+    input.click();
+};
+
+window.filterDevices = function() {
+    const searchTermInput = document.getElementById('deviceSearch');
+    const searchTerm = searchTermInput?.value.toLowerCase() || '';
+    const groupFilter = document.getElementById('groupFilter')?.value || 'all';
+    const statusFilter = document.getElementById('statusFilter')?.value || 'all';
+    
+    const deviceCards = document.querySelectorAll('.device-card');
+    
+    deviceCards.forEach(card => {
+        const deviceId = card.dataset.deviceId;
+        const device = manager.devices.find(d => d.id === deviceId);
+        if (!device) return;
+        
+        let visible = true;
+        
+        // Search term filter
+        if (searchTerm) {
+            // Special filter for low battery
+            if (searchTerm === 'low-battery') {
+                const batt = device.telemetry?.batt;
+                if (!batt || batt === '--' || parseFloat(batt) >= 3.5) {
+                    visible = false;
+                }
+            } else {
+                const cleanSearch = searchTerm.startsWith('#') ? searchTerm.substring(1) : searchTerm;
+                const nameMatch = device.name.toLowerCase().includes(cleanSearch);
+                const tagMatch = device.tags?.some(t => t.toLowerCase().includes(cleanSearch));
+                const idMatch = device.id.toLowerCase().includes(cleanSearch);
+                
+                if (!nameMatch && !tagMatch && !idMatch) {
+                    visible = false;
+                }
+            }
+        }
+        
+        // Group filter
+        if (visible && groupFilter !== 'all') {
+            if (device.groupId !== groupFilter) {
+                visible = false;
+            }
+        }
+        
+        // Status filter
+        if (visible && statusFilter !== 'all') {
+            if (device.status !== statusFilter) {
+                visible = false;
+            }
+        }
+        
+        card.style.display = visible ? 'flex' : 'none'; // Use flex to match .device-card style
+    });
+};
+
+// Initialize board grid and filters on load
 document.addEventListener('DOMContentLoaded', () => {
     renderBoardGrid();
     render();
+    
+    // Set up filter listeners
+    document.getElementById('deviceSearch')?.addEventListener('input', filterDevices);
+    document.getElementById('groupFilter')?.addEventListener('change', filterDevices);
+    document.getElementById('statusFilter')?.addEventListener('change', filterDevices);
 });
