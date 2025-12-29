@@ -68,6 +68,22 @@ export class BatchManager {
     }
 
     /**
+     * Build a config object from a template
+     * @param {Object} template - Template object with config properties
+     * @returns {Object} Config object suitable for device configuration
+     */
+    _buildConfigFromTemplate(template) {
+        const config = {};
+        if (template.region) config.region = template.region;
+        if (template.channelName) config.channelName = template.channelName;
+        if (template.role) config.role = template.role;
+        if (template.modemPreset) config.modemPreset = template.modemPreset;
+        if (template.txPower !== null && template.txPower !== undefined) config.txPower = template.txPower;
+        if (template.hopLimit !== null && template.hopLimit !== undefined) config.hopLimit = template.hopLimit;
+        return config;
+    }
+
+    /**
      * Create a device template/profile
      * @param {Object} template - Template configuration
      * @param {string} template.name - Template name (required)
