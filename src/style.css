@@ -316,7 +316,157 @@ select, input {
     animation: pulse 1.5s infinite;
 }
 
+/* Config Status Badges */
+.badge-pending,
+.badge-configured,
+.badge-no-config {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.2rem 0.5rem;
+    border-radius: 0.25rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-left: 0.5rem;
+}
+
+.badge-pending {
+    background: rgba(251, 191, 36, 0.2);
+    color: #fbbf24;
+    border: 1px solid rgba(251, 191, 36, 0.3);
+}
+
+.badge-configured {
+    background: rgba(34, 197, 94, 0.2);
+    color: var(--success);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.badge-no-config {
+    background: rgba(148, 163, 184, 0.2);
+    color: var(--text-dim);
+    border: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+.badge-pending-small,
+.badge-configured-small {
+    display: inline-block;
+    font-size: 0.65rem;
+    font-weight: 600;
+    padding: 0.15rem 0.4rem;
+    border-radius: 0.2rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.badge-pending-small {
+    background: rgba(251, 191, 36, 0.2);
+    color: #fbbf24;
+}
+
+.badge-configured-small {
+    background: rgba(34, 197, 94, 0.2);
+    color: var(--success);
+}
+
+/* Device Card Config Status States */
+.device-card-pending {
+    border-left: 3px solid #fbbf24 !important;
+}
+
+.device-card-configured {
+    border-left: 3px solid var(--success) !important;
+}
+
+.device-card-pending:hover {
+    box-shadow: 0 4px 12px rgba(251, 191, 36, 0.2);
+}
+
+.device-card-configured:hover {
+    box-shadow: 0 4px 12px rgba(34, 197, 94, 0.2);
+}
+
+/* Config Button Individual */
+.btn-config-individual {
+    position: relative;
+}
+
 @keyframes pulse { 0% { opacity: 0.3; } 50% { opacity: 1; } 100% { opacity: 0.3; } }
+
+/* Config Status Badges */
+.badge-pending,
+.badge-configured,
+.badge-no-config {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.2rem 0.5rem;
+    border-radius: 0.25rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-left: 0.5rem;
+}
+
+.badge-pending {
+    background: rgba(251, 191, 36, 0.2);
+    color: #fbbf24;
+    border: 1px solid rgba(251, 191, 36, 0.3);
+}
+
+.badge-configured {
+    background: rgba(34, 197, 94, 0.2);
+    color: var(--success);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.badge-no-config {
+    background: rgba(148, 163, 184, 0.2);
+    color: var(--text-dim);
+    border: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+.badge-pending-small,
+.badge-configured-small {
+    display: inline-block;
+    font-size: 0.65rem;
+    font-weight: 600;
+    padding: 0.15rem 0.4rem;
+    border-radius: 0.2rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.badge-pending-small {
+    background: rgba(251, 191, 36, 0.2);
+    color: #fbbf24;
+}
+
+.badge-configured-small {
+    background: rgba(34, 197, 94, 0.2);
+    color: var(--success);
+}
+
+/* Device Card Config Status States */
+.device-card-pending {
+    border-left: 3px solid #fbbf24 !important;
+}
+
+.device-card-configured {
+    border-left: 3px solid var(--success) !important;
+}
+
+.device-card-pending:hover {
+    box-shadow: 0 4px 12px rgba(251, 191, 36, 0.2);
+}
+
+.device-card-configured:hover {
+    box-shadow: 0 4px 12px rgba(34, 197, 94, 0.2);
+}
+
+/* Config Button Individual */
+.btn-config-individual {
+    position: relative;
+}
 
 .device-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
 .device-name { font-weight: 700; font-size: 1rem; }

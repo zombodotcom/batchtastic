@@ -383,13 +383,59 @@ window.openConfigPanel = function(deviceId = null) {
 
     // Update modal title
     const header = modal.querySelector('.modal-header h2');
-    if (header) {
-        if (deviceId) {
-            const device = manager.devices.find(d => d.id === deviceId);
-            header.textContent = device ? `Configure ${device.name}` : 'Configure Device';
+    const configStatusMsg = modal.querySelector('.config-status-message');
+    
+    if (deviceId) {
+        const device = manager.devices.find(d => d.id === deviceId);
+        if (device) {
+            if (header) {
+                header.textContent = `Configure ${device.name}`;
+            }
+            
+            // Add context message for disconnected devices
+            if (configStatusMsg) {
+                if (device.status === 'disconnected') {
+                    configStatusMsg.innerHTML = '<div style="padding: 0.75rem; background: rgba(251, 191, 36, 0.1); border-left: 3px solid #fbbf24; border-radius: 0.25rem; margin-bottom: 1rem; font-size: 0.85rem;"><strong>⚠️ Device Disconnected:</strong> Configuration will be saved and applied automatically when this device connects.</div>';
+                    configStatusMsg.style.display = 'block';
+                } else if (device.connectionType === 'ota') {
+                    configStatusMsg.innerHTML = '<div style="padding: 0.75rem; background: rgba(59, 130, 246, 0.1); border-left: 3px solid #3b82f6; border-radius: 0.25rem; margin-bottom: 1rem; font-size: 0.85rem;"><strong>📡 OTA Device:</strong> Configuration will be sent over-the-air when applied.</div>';
+                    configStatusMsg.style.display = 'block';
+                } else {
+                    configStatusMsg.innerHTML = '<div style="padding: 0.75rem; background: rgba(34, 197, 94, 0.1); border-left: 3px solid var(--success); border-radius: 0.25rem; margin-bottom: 1rem; font-size: 0.85rem;"><strong>✓ Device Connected:</strong> Configuration will be applied immediately.</div>';
+                    configStatusMsg.style.display = 'block';
+                }
+            }
+            
+            // Show pending config preview if exists
+            const pendingPreview = modal.querySelector('.pending-config-preview');
+            if (device.pendingConfig && Object.keys(device.pendingConfig).length > 0 && device.status === 'disconnected') {
+                if (pendingPreview) {
+                    pendingPreview.innerHTML = `
+                        <div style="padding: 0.75rem; background: var(--bg-secondary); border-radius: 0.25rem; margin-bottom: 1rem; font-size: 0.8rem;">
+                            <div style="font-weight: 600; margin-bottom: 0.5rem; color: var(--text-dim);">Pending Configuration:</div>
+                            <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+                                ${device.pendingConfig.region ? `<div>📍 Region: ${device.pendingConfig.region}</div>` : ''}
+                                ${device.pendingConfig.channelName ? `<div>📡 Channel: ${device.pendingConfig.channelName}</div>` : ''}
+                                ${device.pendingConfig.role ? `<div>👤 Role: ${device.pendingConfig.role}</div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                    pendingPreview.style.display = 'block';
+                }
+            } else if (pendingPreview) {
+                pendingPreview.style.display = 'none';
+            }
         } else {
+            if (header) {
+                header.textContent = 'Configure Device';
+            }
+            if (configStatusMsg) configStatusMsg.style.display = 'none';
+        }
+    } else {
+        if (header) {
             header.textContent = 'Configure All Devices';
         }
+        if (configStatusMsg) configStatusMsg.style.display = 'none';
     }
 
     // Update apply button text
@@ -399,7 +445,7 @@ window.openConfigPanel = function(deviceId = null) {
         if (deviceId) {
             applyBtn.textContent = '✅ Apply Configuration';
         } else if (selectedCount > 0) {
-            applyBtn.textContent = `✅ Apply to ${selectedCount} Selected`;
+            applyBtn.textContent = `✅ Apply to ${selectedCount} Selected Device${selectedCount !== 1 ? 's' : ''}`;
         } else {
             applyBtn.textContent = '✅ Apply Configuration to All Devices';
         }
@@ -478,6 +524,11 @@ window.closeConfigPanel = function() {
     const modal = document.getElementById('configPanelModal');
     if (modal) {
         modal.style.display = 'none';
+        // Hide status messages when closing
+        const statusMsg = modal.querySelector('.config-status-message');
+        const pendingPreview = modal.querySelector('.pending-config-preview');
+        if (statusMsg) statusMsg.style.display = 'none';
+        if (pendingPreview) pendingPreview.style.display = 'none';
     }
 };
 
@@ -577,6 +628,9 @@ window.applyConfigToAll = async function() {
         } else if (isSelectedDevices) {
             // Configure selected devices
             const selectedDevices = manager.getSelectedDevices();
+            const confirmed = await showConfirm(`Apply configuration to ${selectedDevices.length} selected device${selectedDevices.length !== 1 ? 's' : ''}?`);
+            if (!confirmed) return;
+            
             manager.logGlobal(`Applying configuration to ${selectedDevices.length} selected device(s)...`);
             render();
             
@@ -592,6 +646,10 @@ window.applyConfigToAll = async function() {
             manager.logGlobal(`✅ Configuration applied: ${successful} success, ${failed} failed`);
         } else {
             // Configure all devices
+            const allDevicesCount = manager.devices.length;
+            const confirmed = await showConfirm(`Apply configuration to all ${allDevicesCount} device${allDevicesCount !== 1 ? 's' : ''}?`);
+            if (!confirmed) return;
+            
             manager.logGlobal(`Applying configuration to all devices...`);
             render();
             const result = await manager.injectConfigAll(config);
@@ -827,6 +885,11 @@ function renderDashboard() {
         : '--';
     const snrClass = avgSNR !== '--' && parseFloat(avgSNR) > 0 ? 'success' : 'warning';
 
+    // Calculate Config Status Breakdown
+    const configuredDevices = devices.filter(d => d.config && Object.keys(d.config).length > 0).length;
+    const pendingConfigDevices = devices.filter(d => d.pendingConfig && Object.keys(d.pendingConfig).length > 0 && d.status === 'disconnected').length;
+    const unconfiguredDevices = totalDevices - configuredDevices - pendingConfigDevices;
+
     // Get recent global events (last 3)
     const recentEvents = manager.globalLogs.slice(0, 3);
 
@@ -861,6 +924,21 @@ function renderDashboard() {
             <div class="dash-subtext">
                 <span class="status-indicator" style="background: ${snrClass === 'success' ? 'var(--success)' : '#f59e0b'};"></span>
                 Average SNR
+            </div>
+        </div>
+
+        <div class="dash-card" style="grid-column: span 1;" data-filter-action="config-status" title="Click to view config status breakdown">
+            <div class="dash-label">Config Status</div>
+            <div class="dash-value" style="font-size: 1.5rem;">
+                <span style="color: var(--success);">${configuredDevices}</span>
+                <span class="dash-unit" style="font-size: 0.85rem;"> / ${totalDevices}</span>
+            </div>
+            <div class="dash-subtext">
+                <div style="display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.75rem;">
+                    <div><span class="status-indicator" style="background: var(--success);"></span> ${configuredDevices} Configured</div>
+                    ${pendingConfigDevices > 0 ? `<div><span class="status-indicator" style="background: #fbbf24;"></span> ${pendingConfigDevices} Pending</div>` : ''}
+                    ${unconfiguredDevices > 0 ? `<div><span class="status-indicator" style="background: var(--text-dim);"></span> ${unconfiguredDevices} Unconfigured</div>` : ''}
+                </div>
             </div>
         </div>
 
@@ -902,6 +980,12 @@ function renderDashboard() {
                     searchInput.value = 'low-battery';
                     filterDevices();
                 }
+            } else if (action === 'config-status') {
+                // Scroll to device grid and show config status info
+                const deviceGrid = document.getElementById('deviceGrid');
+                if (deviceGrid) {
+                    deviceGrid.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
             }
         });
     });
@@ -930,8 +1014,13 @@ function render() {
             const boardInfo = d.boardName ? `${d.boardName} (${d.boardVendor})` : 'Unknown Board';
             const boardIcon = d.boardIcon || '📡';
             
+            // Determine config status for visual indicators
+            const hasConfig = d.config && Object.keys(d.config).length > 0;
+            const hasPendingConfig = d.pendingConfig && Object.keys(d.pendingConfig).length > 0;
+            const configStatusClass = hasConfig ? 'device-card-configured' : hasPendingConfig ? 'device-card-pending' : '';
+            
             return `
-            <div class="device-card ${d.status === 'active' ? 'flashing' : ''} ${isSelected ? 'device-selected' : ''} ${isReady ? 'device-ready' : ''}" 
+            <div class="device-card ${d.status === 'active' ? 'flashing' : ''} ${isSelected ? 'device-selected' : ''} ${isReady ? 'device-ready' : ''} ${configStatusClass}" 
                  data-device-id="${d.id}"
                  style="${manager.otaGateway?.id === d.id ? 'border: 2px solid var(--accent);' : ''}">
                 <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
@@ -949,6 +1038,9 @@ function render() {
                             <span class="device-name" style="font-weight: 700; font-size: 1.1rem; cursor: pointer;" onclick="renameDevice('${d.id}')" title="Click to rename">
                                 ${d.name}
                             </span>
+                            ${hasPendingConfig ? '<span class="badge-pending" title="Configuration pending - will apply on connect">Pending</span>' : ''}
+                            ${hasConfig && !hasPendingConfig ? '<span class="badge-configured" title="Device is configured">Configured</span>' : ''}
+                            ${!hasConfig && !hasPendingConfig ? '<span class="badge-no-config" title="No configuration set">No Config</span>' : ''}
                         </div>
                         <div style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 0.5rem;">
                             ${boardIcon} ${boardInfo}
@@ -976,17 +1068,17 @@ function render() {
                             ${d.tags.map(tag => `<span style="font-size:0.7rem; padding: 0.2rem 0.4rem; background: rgba(139,92,246,0.2); border-radius: 0.25rem; color: #a78bfa;">#${tag}</span>`).join('')}
                         </div>
                         ` : ''}
-                        ${d.connectionType !== 'ota' && d.status !== 'disconnected' ? `
                         <div style="margin-top: 0.5rem;">
                             <button onclick="openConfigPanel('${d.id}')" 
-                                    class="btn btn-secondary" 
+                                    class="btn btn-secondary btn-config-individual" 
                                     data-testid="configure-device-btn"
-                                    style="font-size: 0.85rem; padding: 0.4rem 0.8rem; width: 100%;"
+                                    style="font-size: 0.85rem; padding: 0.4rem 0.8rem; width: 100%; display: flex; align-items: center; justify-content: center; gap: 0.5rem;"
                                     ${manager.isFlashing ? 'disabled' : ''}>
                                 ⚙️ Configure
+                                ${hasPendingConfig ? '<span class="badge-pending-small">Pending</span>' : ''}
+                                ${hasConfig && !hasPendingConfig ? '<span class="badge-configured-small">Configured</span>' : ''}
                             </button>
                         </div>
-                        ` : ''}
                     </div>
                     <button onclick="manager.removeDevice('${d.id}'); render();" 
                             style="background:none; border:none; color:var(--error); cursor:pointer; padding: 0.5rem; font-size: 1.5rem; line-height: 1; opacity: 0.7; transition: opacity 0.2s;" 
