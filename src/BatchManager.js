@@ -50,6 +50,7 @@ export class BatchManager {
         this.selectedDevices = new Set(); // Set of device IDs for selection
         this.deviceTemplates = this._loadTemplates(); // Load saved templates from storage
         this.pendingDevices = []; // Devices waiting to be connected (with pre-assigned templates)
+        this.deviceGroups = this._loadGroups(); // Load saved groups from storage
     }
 
     /**
@@ -307,9 +308,15 @@ export class BatchManager {
             progress: 0,
             logs: [],
             nodeId: nodeId,
+            config: {}, // Store device's current configuration
+            configHistory: [], // History of config changes for undo
+            tags: [], // Device tags for grouping/filtering
+            groupId: null, // Device group ID (if assigned to a group)
+            templateId: null, // Template ID if config was applied from template
             telemetry: { batt: '--', snr: '--', util: '--' },
             snrHistory: [],
             airUtilHistory: [],
+            testResults: {}, // Store test results (connectivity, latency, etc.)
             name: nodeId ? `NODE-${nodeId}` : `OTA-${deviceId}`
         };
         this.devices.push(device);
@@ -367,13 +374,19 @@ export class BatchManager {
             boardChip: board.chip,
             boardIcon: board.icon,
             name: config.deviceName || `NODE-${deviceId}`,
-            pendingConfig: config, // Store config to apply on connect
+            config: config, // Store device's current configuration
+            pendingConfig: config, // Legacy: Store config to apply on connect (will migrate to config)
+            configHistory: [], // History of config changes for undo
+            tags: [], // Device tags for grouping/filtering
+            groupId: null, // Device group ID (if assigned to a group)
+            templateId: null, // Template ID if config was applied from template
             configured: false,
             progress: 0,
             logs: [],
             telemetry: { batt: '--', snr: '--', util: '--' },
             snrHistory: [],
-            airUtilHistory: []
+            airUtilHistory: [],
+            testResults: {} // Store test results (connectivity, latency, etc.)
         };
         this.devices.push(device);
         this.logGlobal(`Placeholder device "${device.name}" created (${board.name})`);
@@ -471,6 +484,13 @@ export class BatchManager {
             boardVendor: info.boardVendor || null,
             boardChip: info.boardChip || null,
             boardIcon: info.boardIcon || null,
+            config: pendingDevice?.template ? this._buildConfigFromTemplate(pendingDevice.template) : (pendingDevice?.config || {}), // Store device's current configuration
+            pendingConfig: pendingDevice?.template ? this._buildConfigFromTemplate(pendingDevice.template) : (pendingDevice?.config || null), // Legacy: Store config to apply on connect
+            configHistory: [], // History of config changes for undo
+            tags: [], // Device tags for grouping/filtering
+            groupId: null, // Device group ID (if assigned to a group)
+            templateId: pendingDevice?.template?.id || null, // Template ID if config was applied from template
+            testResults: {}, // Store test results (connectivity, latency, etc.)
             configured: false // Track if device has been configured
         };
         
@@ -1102,6 +1122,30 @@ export class BatchManager {
         return { successful, failed };
     }
 
+    /**
+     * Save config to device's history before applying
+     * @param {string} deviceId - Device ID
+     * @param {Config} config - Configuration to save
+     */
+    _saveConfigHistory(deviceId, config) {
+        const device = this.devices.find(d => d.id === deviceId);
+        if (!device) return;
+        
+        // Save current config to history before applying new one
+        if (device.config && Object.keys(device.config).length > 0) {
+            device.configHistory.push({
+                config: JSON.parse(JSON.stringify(device.config)), // Deep copy
+                timestamp: new Date().toISOString(),
+                appliedBy: 'user'
+            });
+            
+            // Limit history to last 10 entries
+            if (device.configHistory.length > 10) {
+                device.configHistory.shift();
+            }
+        }
+    }
+
     async injectConfig(deviceId, config) {
         const device = this.devices.find(d => d.id === deviceId);
         if (!device) {
@@ -1109,6 +1153,13 @@ export class BatchManager {
         }
 
         this._validateConfig(config);
+        
+        // Save current config to history before applying
+        this._saveConfigHistory(deviceId, device.config || {});
+        
+        // Update device's config property (merge with existing)
+        const mergedConfig = { ...(device.config || {}), ...config };
+        device.config = mergedConfig;
         
         this.log(device, `Injecting config: ${JSON.stringify(config)}`);
 
@@ -1161,6 +1212,7 @@ export class BatchManager {
 
             this.log(device, '✅ Config injected successfully');
             device.configured = true; // Mark device as configured
+            device.pendingConfig = device.config; // Update pendingConfig for backward compatibility
             this.logGlobal(`Config injected to ${device.name}`);
             
         } catch (e) {
@@ -1214,6 +1266,34 @@ export class BatchManager {
         const failed = results.filter(r => r.status === 'rejected').length;
 
         this.logGlobal(`Config injection complete: ${successful} success, ${failed} failed`);
+        return { successful, failed };
+    }
+
+    /**
+     * Apply configuration to selected devices (updates config property, may or may not inject)
+     * @param {Config|Object} config - Configuration object
+     * @param {boolean} [inject=false] - Whether to inject config to devices immediately
+     * @returns {Promise<{successful: number, failed: number}>} Result object with success/failure counts
+     */
+    async applyConfigToSelected(config, inject = false) {
+        const selectedDevices = this.getSelectedDevices();
+        
+        if (selectedDevices.length === 0) {
+            throw new Error('No devices selected');
+        }
+
+        this._validateConfig(config);
+        
+        this.logGlobal(`Applying configuration to ${selectedDevices.length} selected device(s)...`);
+        
+        const results = await Promise.allSettled(
+            selectedDevices.map(d => this.applyConfigToDevice(d.id, config, inject))
+        );
+
+        const successful = results.filter(r => r.status === 'fulfilled').length;
+        const failed = results.filter(r => r.status === 'rejected').length;
+
+        this.logGlobal(`Config application complete: ${successful} success, ${failed} failed`);
         return { successful, failed };
     }
 
@@ -1421,6 +1501,392 @@ export class BatchManager {
         return true;
     }
 
+    /**
+     * Device Groups Management
+     */
+
+    /**
+     * Load device groups from storage
+     */
+    _loadGroups() {
+        return getStorage('batchtastic_groups', []);
+    }
+
+    /**
+     * Save device groups to storage
+     */
+    _saveGroups() {
+        setStorage('batchtastic_groups', this.deviceGroups);
+    }
+
+    /**
+     * Create a device group
+     * @param {string} name - Group name
+     * @param {string} [description] - Group description
+     * @returns {Object} Created group object
+     */
+    createGroup(name, description = '') {
+        if (!name) {
+            throw new Error('Group name is required');
+        }
+        
+        const group = {
+            id: crypto.randomUUID(),
+            name: name,
+            description: description,
+            createdAt: new Date().toISOString()
+        };
+        
+        this.deviceGroups.push(group);
+        this._saveGroups();
+        this.logGlobal(`Group "${name}" created`);
+        return group;
+    }
+
+    /**
+     * Delete a device group
+     * @param {string} groupId - Group ID to delete
+     */
+    deleteGroup(groupId) {
+        const group = this.deviceGroups.find(g => g.id === groupId);
+        if (!group) {
+            throw new Error('Group not found');
+        }
+        
+        // Remove group from all devices
+        this.devices.forEach(device => {
+            if (device.groupId === groupId) {
+                device.groupId = null;
+            }
+        });
+        
+        this.deviceGroups = this.deviceGroups.filter(g => g.id !== groupId);
+        this._saveGroups();
+        this.logGlobal(`Group "${group.name}" deleted`);
+    }
+
+    /**
+     * Get all device groups
+     * @returns {Array} Array of group objects
+     */
+    getGroups() {
+        return this.deviceGroups;
+    }
+
+    /**
+     * Get a group by ID
+     * @param {string} groupId - Group ID
+     * @returns {Object|undefined} Group object or undefined if not found
+     */
+    getGroup(groupId) {
+        return this.deviceGroups.find(g => g.id === groupId);
+    }
+
+    /**
+     * Add device to group
+     * @param {string} deviceId - Device ID
+     * @param {string} groupId - Group ID
+     */
+    addDeviceToGroup(deviceId, groupId) {
+        const device = this.devices.find(d => d.id === deviceId);
+        if (!device) {
+            throw new Error('Device not found');
+        }
+        
+        const group = this.deviceGroups.find(g => g.id === groupId);
+        if (!group) {
+            throw new Error('Group not found');
+        }
+        
+        device.groupId = groupId;
+        this.logGlobal(`Device "${device.name}" added to group "${group.name}"`);
+    }
+
+    /**
+     * Remove device from group
+     * @param {string} deviceId - Device ID
+     */
+    removeDeviceFromGroup(deviceId) {
+        const device = this.devices.find(d => d.id === deviceId);
+        if (!device) {
+            throw new Error('Device not found');
+        }
+        
+        device.groupId = null;
+        this.logGlobal(`Device "${device.name}" removed from group`);
+    }
+
+    /**
+     * Get devices by group
+     * @param {string} groupId - Group ID
+     * @returns {Array} Array of device objects in the group
+     */
+    getDevicesByGroup(groupId) {
+        return this.devices.filter(d => d.groupId === groupId);
+    }
+
+    /**
+     * Apply configuration to all devices in a group
+     * @param {string} groupId - Group ID
+     * @param {Config|Object} config - Configuration object
+     * @param {boolean} [inject=false] - Whether to inject config immediately
+     * @returns {Promise<{successful: number, failed: number}>} Result object
+     */
+    async applyConfigToGroup(groupId, config, inject = false) {
+        const groupDevices = this.getDevicesByGroup(groupId);
+        
+        if (groupDevices.length === 0) {
+            throw new Error('No devices in group');
+        }
+
+        this._validateConfig(config);
+        
+        this.logGlobal(`Applying configuration to group (${groupDevices.length} devices)...`);
+        
+        const results = await Promise.allSettled(
+            groupDevices.map(d => this.applyConfigToDevice(d.id, config, inject))
+        );
+
+        const successful = results.filter(r => r.status === 'fulfilled').length;
+        const failed = results.filter(r => r.status === 'rejected').length;
+
+        this.logGlobal(`Config application complete: ${successful} success, ${failed} failed`);
+        return { successful, failed };
+    }
+
+    /**
+     * Device Tags Management
+     */
+
+    /**
+     * Add tag to device
+     * @param {string} deviceId - Device ID
+     * @param {string} tag - Tag name
+     */
+    addTag(deviceId, tag) {
+        const device = this.devices.find(d => d.id === deviceId);
+        if (!device) {
+            throw new Error('Device not found');
+        }
+        
+        if (!device.tags) {
+            device.tags = [];
+        }
+        
+        if (!device.tags.includes(tag)) {
+            device.tags.push(tag);
+            this.logGlobal(`Tag "${tag}" added to device "${device.name}"`);
+        }
+    }
+
+    /**
+     * Remove tag from device
+     * @param {string} deviceId - Device ID
+     * @param {string} tag - Tag name
+     */
+    removeTag(deviceId, tag) {
+        const device = this.devices.find(d => d.id === deviceId);
+        if (!device) {
+            throw new Error('Device not found');
+        }
+        
+        if (device.tags) {
+            device.tags = device.tags.filter(t => t !== tag);
+            this.logGlobal(`Tag "${tag}" removed from device "${device.name}"`);
+        }
+    }
+
+    /**
+     * Get devices by tag
+     * @param {string} tag - Tag name
+     * @returns {Array} Array of device objects with the tag
+     */
+    getDevicesByTag(tag) {
+        return this.devices.filter(d => d.tags && d.tags.includes(tag));
+    }
+
+    /**
+     * Get all unique tags across all devices
+     * @returns {Array} Array of unique tag strings
+     */
+    getAllTags() {
+        const allTags = new Set();
+        this.devices.forEach(device => {
+            if (device.tags && Array.isArray(device.tags)) {
+                device.tags.forEach(tag => allTags.add(tag));
+            }
+        });
+        return Array.from(allTags).sort();
+    }
+
+    /**
+     * Bulk Import System
+     */
+
+    /**
+     * Import devices from JSON
+     * @param {string} jsonData - JSON string containing device data
+     * @returns {Object} Import result with imported device count
+     */
+    importDevicesFromJSON(jsonData) {
+        try {
+            const data = JSON.parse(jsonData);
+            const devices = data.devices || (Array.isArray(data) ? data : []);
+            
+            if (!Array.isArray(devices) || devices.length === 0) {
+                throw new Error('Invalid JSON format: expected array of devices or object with devices array');
+            }
+            
+            const imported = [];
+            const errors = [];
+            
+            for (const deviceData of devices) {
+                try {
+                    // Validate required fields
+                    if (!deviceData.name && !deviceData.deviceName) {
+                        errors.push(`Device missing name: ${JSON.stringify(deviceData)}`);
+                        continue;
+                    }
+                    
+                    // Find board definition
+                    const boardId = deviceData.boardType || deviceData.boardId || 'tbeam';
+                    const board = {
+                        id: boardId,
+                        name: deviceData.boardName || 'T-Beam',
+                        vendor: deviceData.boardVendor || 'LilyGO',
+                        chip: deviceData.boardChip || 'esp32',
+                        icon: deviceData.boardIcon || '📡'
+                    };
+                    
+                    // Build config from device data
+                    const config = {
+                        deviceName: deviceData.name || deviceData.deviceName,
+                        ...(deviceData.config || {}),
+                        ...(deviceData.region ? { region: deviceData.region } : {}),
+                        ...(deviceData.channelName ? { channelName: deviceData.channelName } : {}),
+                        ...(deviceData.role ? { role: deviceData.role } : {}),
+                        ...(deviceData.modemPreset ? { modemPreset: deviceData.modemPreset } : {}),
+                        ...(deviceData.txPower !== undefined ? { txPower: deviceData.txPower } : {}),
+                        ...(deviceData.hopLimit !== undefined ? { hopLimit: deviceData.hopLimit } : {})
+                    };
+                    
+                    // Create disconnected device
+                    const device = this.addDisconnectedDevice(board, config);
+                    
+                    // Add tags if provided
+                    if (deviceData.tags && Array.isArray(deviceData.tags)) {
+                        device.tags = deviceData.tags;
+                    }
+                    
+                    // Assign to group if provided
+                    if (deviceData.groupId) {
+                        // Check if group exists, create if not
+                        let group = this.deviceGroups.find(g => g.id === deviceData.groupId);
+                        if (!group && deviceData.groupName) {
+                            group = this.createGroup(deviceData.groupName, deviceData.groupDescription || '');
+                        }
+                        if (group) {
+                            device.groupId = group.id;
+                        }
+                    }
+                    
+                    imported.push(device.id);
+                } catch (e) {
+                    errors.push(`Failed to import device: ${e.message}`);
+                }
+            }
+            
+            this.logGlobal(`Imported ${imported.length} device(s)${errors.length > 0 ? `, ${errors.length} error(s)` : ''}`);
+            
+            return {
+                imported: imported.length,
+                errors: errors,
+                deviceIds: imported
+            };
+        } catch (e) {
+            throw new Error(`JSON import failed: ${e.message}`);
+        }
+    }
+
+    /**
+     * Import devices from CSV
+     * @param {string} csvData - CSV string containing device data
+     * @returns {Object} Import result with imported device count
+     */
+    importDevicesFromCSV(csvData) {
+        try {
+            const lines = csvData.trim().split('\n');
+            if (lines.length < 2) {
+                throw new Error('CSV must have at least a header row and one data row');
+            }
+            
+            // Parse header
+            const headers = lines[0].split(',').map(h => h.trim());
+            const nameIdx = headers.findIndex(h => h.toLowerCase() === 'name' || h.toLowerCase() === 'devicename');
+            const boardIdx = headers.findIndex(h => h.toLowerCase() === 'boardtype' || h.toLowerCase() === 'board');
+            const regionIdx = headers.findIndex(h => h.toLowerCase() === 'region');
+            const channelIdx = headers.findIndex(h => h.toLowerCase() === 'channelname' || h.toLowerCase() === 'channel');
+            const roleIdx = headers.findIndex(h => h.toLowerCase() === 'role');
+            const tagsIdx = headers.findIndex(h => h.toLowerCase() === 'tags');
+            
+            if (nameIdx === -1) {
+                throw new Error('CSV must have a "name" or "deviceName" column');
+            }
+            
+            const imported = [];
+            const errors = [];
+            
+            for (let i = 1; i < lines.length; i++) {
+                try {
+                    const values = lines[i].split(',').map(v => v.trim());
+                    const name = values[nameIdx];
+                    
+                    if (!name) {
+                        errors.push(`Row ${i + 1}: Missing device name`);
+                        continue;
+                    }
+                    
+                    const boardType = values[boardIdx] || 'tbeam';
+                    const board = {
+                        id: boardType,
+                        name: boardType,
+                        vendor: 'LilyGO',
+                        chip: 'esp32',
+                        icon: '📡'
+                    };
+                    
+                    const config = {
+                        deviceName: name,
+                        ...(values[regionIdx] ? { region: values[regionIdx] } : {}),
+                        ...(values[channelIdx] ? { channelName: values[channelIdx] } : {}),
+                        ...(values[roleIdx] ? { role: values[roleIdx] } : {})
+                    };
+                    
+                    const device = this.addDisconnectedDevice(board, config);
+                    
+                    // Parse tags if provided
+                    if (values[tagsIdx]) {
+                        device.tags = values[tagsIdx].split(';').map(t => t.trim()).filter(t => t);
+                    }
+                    
+                    imported.push(device.id);
+                } catch (e) {
+                    errors.push(`Row ${i + 1}: ${e.message}`);
+                }
+            }
+            
+            this.logGlobal(`Imported ${imported.length} device(s) from CSV${errors.length > 0 ? `, ${errors.length} error(s)` : ''}`);
+            
+            return {
+                imported: imported.length,
+                errors: errors,
+                deviceIds: imported
+            };
+        } catch (e) {
+            throw new Error(`CSV import failed: ${e.message}`);
+        }
+    }
+
     exportReport() {
         const report = {
             timestamp: new Date().toISOString(),
@@ -1441,5 +1907,193 @@ export class BatchManager {
         a.download = `batchtastic-report-${Date.now()}.json`;
         a.click();
         this.logGlobal("Report exported.");
+    }
+
+    /**
+     * Batch Testing/Diagnostics
+     */
+
+    /**
+     * Test device connectivity
+     * @param {string} deviceId - Device ID
+     * @returns {Promise<Object>} Test results
+     */
+    async testDeviceConnectivity(deviceId) {
+        const device = this.devices.find(d => d.id === deviceId);
+        if (!device) {
+            throw new Error('Device not found');
+        }
+        
+        if (!device.testResults) {
+            device.testResults = {};
+        }
+        
+        const startTime = Date.now();
+        let success = false;
+        let latency = null;
+        
+        try {
+            // Simple connectivity test: check if device connection is open
+            if (device.connectionType === 'usb' && device.connection) {
+                if (device.connection.writable) {
+                    success = true;
+                    latency = Date.now() - startTime;
+                }
+            } else if (device.connectionType === 'ble' && device.connection) {
+                // BLE connection check
+                success = true;
+                latency = Date.now() - startTime;
+            } else if (device.connectionType === 'ota') {
+                // OTA devices are always "connected" (they're on the mesh)
+                success = true;
+                latency = 0;
+            } else {
+                success = false;
+            }
+            
+            device.testResults.connectivity = success;
+            device.testResults.latency = latency;
+            device.testResults.lastTested = new Date().toISOString();
+            
+            this.log(device, `Connectivity test: ${success ? 'PASS' : 'FAIL'}${latency !== null ? ` (${latency}ms)` : ''}`);
+        } catch (e) {
+            device.testResults.connectivity = false;
+            device.testResults.error = e.message;
+            this.log(device, `Connectivity test failed: ${e.message}`);
+        }
+        
+        return device.testResults;
+    }
+
+    /**
+     * Test connectivity for multiple devices
+     * @param {string[]} [deviceIds=null] - Array of device IDs (null = test all connected devices)
+     * @returns {Promise<Object>} Test results summary
+     */
+    async testBatchConnectivity(deviceIds = null) {
+        const targetDevices = deviceIds 
+            ? this.devices.filter(d => deviceIds.includes(d.id))
+            : this.devices.filter(d => d.connectionType !== 'ota' && d.status !== 'disconnected');
+        
+        if (targetDevices.length === 0) {
+            throw new Error('No devices to test');
+        }
+        
+        this.logGlobal(`Testing connectivity for ${targetDevices.length} device(s)...`);
+        
+        const results = await Promise.allSettled(
+            targetDevices.map(d => this.testDeviceConnectivity(d.id))
+        );
+        
+        const successful = results.filter(r => r.status === 'fulfilled').length;
+        const failed = results.filter(r => r.status === 'rejected').length;
+        const passed = targetDevices.filter(d => d.testResults?.connectivity === true).length;
+        const failedTests = targetDevices.filter(d => d.testResults?.connectivity === false).length;
+        
+        this.logGlobal(`Connectivity test complete: ${passed} passed, ${failedTests} failed`);
+        
+        return {
+            total: targetDevices.length,
+            passed,
+            failed: failedTests,
+            errors: failed
+        };
+    }
+
+    /**
+     * Get device info (node ID, firmware version, etc.)
+     * @param {string} deviceId - Device ID
+     * @returns {Promise<Object>} Device info object
+     */
+    async getDeviceInfo(deviceId) {
+        const device = this.devices.find(d => d.id === deviceId);
+        if (!device) {
+            throw new Error('Device not found');
+        }
+        
+        // This would typically query the device via protobuf
+        // For now, return available info
+        return {
+            id: device.id,
+            name: device.name,
+            nodeId: device.nodeId || null,
+            connectionType: device.connectionType,
+            status: device.status,
+            boardType: device.boardType,
+            boardName: device.boardName,
+            configured: device.configured,
+            config: device.config || {}
+        };
+    }
+
+    /**
+     * Config History/Undo
+     */
+
+    /**
+     * Get config history for a device
+     * @param {string} deviceId - Device ID
+     * @returns {Array} Array of history entries
+     */
+    getConfigHistory(deviceId) {
+        const device = this.devices.find(d => d.id === deviceId);
+        if (!device) {
+            throw new Error('Device not found');
+        }
+        return device.configHistory || [];
+    }
+
+    /**
+     * Undo last config change (revert to previous config)
+     * @param {string} deviceId - Device ID
+     * @returns {Promise<void>}
+     */
+    async undoConfig(deviceId) {
+        const device = this.devices.find(d => d.id === deviceId);
+        if (!device) {
+            throw new Error('Device not found');
+        }
+        
+        if (!device.configHistory || device.configHistory.length === 0) {
+            throw new Error('No config history to undo');
+        }
+        
+        // Get previous config from history
+        const previousConfig = device.configHistory[device.configHistory.length - 1].config;
+        
+        // Apply previous config
+        const shouldInject = device.connectionType !== 'ota' && device.status !== 'disconnected' && device.connection;
+        await this.applyConfigToDevice(deviceId, previousConfig, shouldInject);
+        
+        // Remove the last history entry (since we just applied it)
+        device.configHistory.pop();
+        
+        this.logGlobal(`Config undone for ${device.name}`);
+    }
+
+    /**
+     * Restore config from specific history entry
+     * @param {string} deviceId - Device ID
+     * @param {number} historyIndex - Index in config history array
+     * @returns {Promise<void>}
+     */
+    async restoreConfigFromHistory(deviceId, historyIndex) {
+        const device = this.devices.find(d => d.id === deviceId);
+        if (!device) {
+            throw new Error('Device not found');
+        }
+        
+        if (!device.configHistory || historyIndex < 0 || historyIndex >= device.configHistory.length) {
+            throw new Error('Invalid history index');
+        }
+        
+        const historyEntry = device.configHistory[historyIndex];
+        const configToRestore = historyEntry.config;
+        
+        // Apply the config
+        const shouldInject = device.connectionType !== 'ota' && device.status !== 'disconnected' && device.connection;
+        await this.applyConfigToDevice(deviceId, configToRestore, shouldInject);
+        
+        this.logGlobal(`Config restored from history for ${device.name}`);
     }
 }

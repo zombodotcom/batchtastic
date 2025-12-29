@@ -364,15 +364,110 @@ window.connectDevice = async function(deviceId) {
 };
 
 // Configuration Panel Functions
-window.openConfigPanel = function() {
+/**
+ * Open configuration panel for a specific device or all devices
+ * @param {string|null} [deviceId=null] - Device ID to configure (null = configure all)
+ */
+window.openConfigPanel = function(deviceId = null) {
     const modal = document.getElementById('configPanelModal');
-    if (modal) {
-        modal.style.display = 'flex';
-        // Reset to basic tab
-        switchConfigTab('basic');
-        // Update preset list
+    if (!modal) return;
+    
+    // Store the target device ID (null = all devices)
+    modal.dataset.targetDeviceId = deviceId || '';
+    
+    // Update modal title
+    const header = modal.querySelector('.modal-header h2');
+    if (header) {
+        if (deviceId) {
+            const device = manager.devices.find(d => d.id === deviceId);
+            header.textContent = device ? `Configure ${device.name}` : 'Configure Device';
+        } else {
+            header.textContent = 'Configure All Devices';
+        }
+    }
+    
+    // Update apply button text
+    const applyBtn = document.getElementById('applyConfigBtn');
+    if (applyBtn) {
+        const selectedCount = manager.getSelectionCount();
+        if (deviceId) {
+            applyBtn.textContent = '✅ Apply Configuration';
+        } else if (selectedCount > 0) {
+            applyBtn.textContent = `✅ Apply to ${selectedCount} Selected`;
+        } else {
+            applyBtn.textContent = '✅ Apply Configuration to All Devices';
+        }
+    }
+    
+    // Load device's current config if configuring single device
+    if (deviceId) {
+        const device = manager.devices.find(d => d.id === deviceId);
+        if (device) {
+            // Load existing config into form (prefer config over pendingConfig)
+            const config = device.config || device.pendingConfig || {};
+            if (config.region) {
+                const regionEl = document.getElementById('region');
+                if (regionEl) regionEl.value = config.region;
+            }
+            if (config.channelName) {
+                const channelEl = document.getElementById('channelName');
+                if (channelEl) channelEl.value = config.channelName;
+            }
+            if (config.role) {
+                const roleEl = document.getElementById('nodeRole');
+                if (roleEl) roleEl.value = config.role;
+            }
+            if (config.modemPreset) {
+                const presetEl = document.getElementById('modemPreset');
+                if (presetEl) presetEl.value = config.modemPreset;
+            }
+            if (config.txPower !== undefined) {
+                const txPowerEl = document.getElementById('txPower');
+                if (txPowerEl) txPowerEl.value = config.txPower;
+            }
+            if (config.hopLimit !== undefined) {
+                const hopLimitEl = document.getElementById('hopLimit');
+                if (hopLimitEl) hopLimitEl.value = config.hopLimit;
+            }
+        } else {
+            // Reset to defaults
+            const regionEl = document.getElementById('region');
+            if (regionEl) regionEl.value = 'US';
+            const channelEl = document.getElementById('channelName');
+            if (channelEl) channelEl.value = 'LongFast';
+            const roleEl = document.getElementById('nodeRole');
+            if (roleEl) roleEl.value = 'ROUTER';
+            const presetEl = document.getElementById('modemPreset');
+            if (presetEl) presetEl.value = '';
+            const txPowerEl = document.getElementById('txPower');
+            if (txPowerEl) txPowerEl.value = '';
+            const hopLimitEl = document.getElementById('hopLimit');
+            if (hopLimitEl) hopLimitEl.value = '';
+        }
+    } else {
+        // Reset form to defaults for "all devices"
+        const regionEl = document.getElementById('region');
+        if (regionEl) regionEl.value = 'US';
+        const channelEl = document.getElementById('channelName');
+        if (channelEl) channelEl.value = 'LongFast';
+        const roleEl = document.getElementById('nodeRole');
+        if (roleEl) roleEl.value = 'ROUTER';
+        const presetEl = document.getElementById('modemPreset');
+        if (presetEl) presetEl.value = '';
+        const txPowerEl = document.getElementById('txPower');
+        if (txPowerEl) txPowerEl.value = '';
+        const hopLimitEl = document.getElementById('hopLimit');
+        if (hopLimitEl) hopLimitEl.value = '';
+    }
+    
+    // Reset to basic tab
+    switchConfigTab('basic');
+    // Update preset list
+    if (typeof renderConfigPresets === 'function') {
         renderConfigPresets();
     }
+    
+    modal.style.display = 'flex';
 };
 
 window.closeConfigPanel = function() {
@@ -426,6 +521,15 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 window.applyConfigToAll = async function() {
+    const modal = document.getElementById('configPanelModal');
+    if (!modal) return;
+    
+    // Check if we're configuring a single device, selected devices, or all devices
+    const targetDeviceId = modal.dataset.targetDeviceId;
+    const selectedCount = manager.getSelectionCount();
+    const isSingleDevice = targetDeviceId && targetDeviceId !== '';
+    const isSelectedDevices = !isSingleDevice && selectedCount > 0;
+    
     const region = document.getElementById('region')?.value;
     const channelName = document.getElementById('channelName')?.value;
     const nodeRole = document.getElementById('nodeRole')?.value;
@@ -438,22 +542,58 @@ window.applyConfigToAll = async function() {
         return;
     }
 
-    const profile = {
-        name: 'Batch Profile',
+    const config = {
         region: region,
         channelName: channelName,
         role: nodeRole
     };
 
-    if (modemPreset) profile.modemPreset = modemPreset;
-    if (txPower) profile.txPower = parseInt(txPower, 10);
-    if (hopLimit) profile.hopLimit = parseInt(hopLimit, 10);
+    if (modemPreset) config.modemPreset = modemPreset;
+    if (txPower) config.txPower = parseInt(txPower, 10);
+    if (hopLimit) config.hopLimit = parseInt(hopLimit, 10);
 
     try {
-        manager.logGlobal(`Applying configuration to all devices...`);
-        render();
-        const result = await manager.injectConfigAll(profile);
-        manager.logGlobal(`✅ Configuration applied: ${result.successful} success, ${result.failed} failed`);
+        if (isSingleDevice) {
+            // Configure single device
+            const device = manager.devices.find(d => d.id === targetDeviceId);
+            if (!device) {
+                alert('Device not found');
+                return;
+            }
+            
+            // Update device's config using applyConfigToDevice
+            const shouldInject = device.connectionType !== 'ota' && device.status !== 'disconnected' && device.connection;
+            await manager.applyConfigToDevice(targetDeviceId, config, shouldInject);
+            
+            if (shouldInject) {
+                manager.logGlobal(`✅ Configuration applied to ${device.name}`);
+            } else {
+                manager.logGlobal(`Configuration saved for ${device.name} (will apply on connect)`);
+            }
+        } else if (isSelectedDevices) {
+            // Configure selected devices
+            const selectedDevices = manager.getSelectedDevices();
+            manager.logGlobal(`Applying configuration to ${selectedDevices.length} selected device(s)...`);
+            render();
+            
+            const results = await Promise.allSettled(
+                selectedDevices.map(d => {
+                    const shouldInject = d.connectionType !== 'ota' && d.status !== 'disconnected' && d.connection;
+                    return manager.applyConfigToDevice(d.id, config, shouldInject);
+                })
+            );
+            
+            const successful = results.filter(r => r.status === 'fulfilled').length;
+            const failed = results.filter(r => r.status === 'rejected').length;
+            manager.logGlobal(`✅ Configuration applied: ${successful} success, ${failed} failed`);
+        } else {
+            // Configure all devices
+            manager.logGlobal(`Applying configuration to all devices...`);
+            render();
+            const result = await manager.injectConfigAll(config);
+            manager.logGlobal(`✅ Configuration applied: ${result.successful} success, ${result.failed} failed`);
+        }
+        
         closeConfigPanel();
         render();
     } catch (e) {
@@ -715,7 +855,7 @@ function render() {
                         <div style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 0.5rem;">
                             ${boardIcon} ${boardInfo}
                         </div>
-                        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem;">
                             <span style="font-size:0.75rem; padding: 0.25rem 0.5rem; background: var(--bg-secondary); border-radius: 0.25rem; text-transform: uppercase;">${d.connectionType}</span>
                             ${manager.otaGateway?.id === d.id ? '<span style="font-size:0.75rem; padding: 0.25rem 0.5rem; background: rgba(56,189,248,0.2); border-radius: 0.25rem; color: var(--accent);">🌐 GATEWAY</span>' : ''}
                             ${d.chipInfo ? `<span style="font-size:0.75rem; padding: 0.25rem 0.5rem; background: rgba(34,197,94,0.2); border-radius: 0.25rem; color: var(--success);">${d.chipInfo}</span>` : ''}
@@ -723,6 +863,31 @@ function render() {
                             ${isReady ? '<span style="font-size:0.75rem; padding: 0.25rem 0.5rem; background: rgba(34,197,94,0.2); border-radius: 0.25rem; color: var(--success);">✓ Ready</span>' : ''}
                             <span class="status-pill status-${d.status}">${d.status}</span>
                         </div>
+                        ${((d.config && Object.keys(d.config).length > 0) || (d.pendingConfig && Object.keys(d.pendingConfig).length > 0)) ? `
+                        <div style="margin-bottom: 0.75rem; padding: 0.5rem; background: var(--bg-secondary); border-radius: 0.25rem; font-size: 0.75rem;">
+                            <div style="font-weight: 600; margin-bottom: 0.25rem; color: var(--text-dim);">Config:</div>
+                            <div style="display: flex; flex-direction: column; gap: 0.2rem;">
+                                ${(d.config?.region || d.pendingConfig?.region) ? `<div>📍 ${d.config?.region || d.pendingConfig?.region}</div>` : ''}
+                                ${(d.config?.channelName || d.pendingConfig?.channelName) ? `<div>📡 ${d.config?.channelName || d.pendingConfig?.channelName}</div>` : ''}
+                                ${(d.config?.role || d.pendingConfig?.role) ? `<div>👤 ${d.config?.role || d.pendingConfig?.role}</div>` : ''}
+                            </div>
+                        </div>
+                        ` : ''}
+                        ${d.tags && d.tags.length > 0 ? `
+                        <div style="display: flex; gap: 0.25rem; flex-wrap: wrap; margin-bottom: 0.5rem;">
+                            ${d.tags.map(tag => `<span style="font-size:0.7rem; padding: 0.2rem 0.4rem; background: rgba(139,92,246,0.2); border-radius: 0.25rem; color: #a78bfa;">#${tag}</span>`).join('')}
+                        </div>
+                        ` : ''}
+                        ${d.connectionType !== 'ota' && d.status !== 'disconnected' ? `
+                        <div style="margin-top: 0.5rem;">
+                            <button onclick="openConfigPanel('${d.id}')" 
+                                    class="btn btn-secondary" 
+                                    style="font-size: 0.85rem; padding: 0.4rem 0.8rem; width: 100%;"
+                                    ${manager.isFlashing ? 'disabled' : ''}>
+                                ⚙️ Configure
+                            </button>
+                        </div>
+                        ` : ''}
                     </div>
                     <button onclick="manager.removeDevice('${d.id}'); render();" 
                             style="background:none; border:none; color:var(--error); cursor:pointer; padding: 0.5rem; font-size: 1.5rem; line-height: 1; opacity: 0.7; transition: opacity 0.2s;" 

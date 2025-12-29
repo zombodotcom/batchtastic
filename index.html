@@ -29,6 +29,48 @@
 
 <!-- Main Content -->
 <main class="main-content">
+    <!-- Search and Filter Bar -->
+    <div class="search-filter-bar" style="margin-bottom: 1rem; padding: 1rem; background: var(--bg-secondary); border-radius: 0.5rem;">
+        <div style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;">
+            <!-- Search Input -->
+            <input type="text" 
+                   id="deviceSearch" 
+                   placeholder="Search devices..." 
+                   style="flex: 1; min-width: 200px; padding: 0.5rem; border: 1px solid var(--border); border-radius: 0.25rem; background: var(--bg-primary); color: var(--text-primary);">
+            
+            <!-- Status Filter -->
+            <select id="statusFilter" 
+                    style="padding: 0.5rem; border: 1px solid var(--border); border-radius: 0.25rem; background: var(--bg-primary); color: var(--text-primary);">
+                <option value="all">All Status</option>
+                <option value="ready">Ready</option>
+                <option value="connected">Connected</option>
+                <option value="disconnected">Disconnected</option>
+                <option value="configured">Configured</option>
+                <option value="flashing">Flashing</option>
+                <option value="error">Error</option>
+            </select>
+            
+            <!-- Group Filter -->
+            <select id="groupFilter" 
+                    style="padding: 0.5rem; border: 1px solid var(--border); border-radius: 0.25rem; background: var(--bg-primary); color: var(--text-primary);">
+                <option value="all">All Groups</option>
+            </select>
+            
+            <!-- Tag Filter (multi-select chips will be added dynamically) -->
+            <div id="tagFilterContainer" style="display: flex; gap: 0.25rem; flex-wrap: wrap; align-items: center;">
+                <span style="font-size: 0.85rem; color: var(--text-dim);">Tags:</span>
+            </div>
+            
+            <!-- Clear Filters Button -->
+            <button id="clearFiltersBtn" 
+                    class="btn btn-secondary" 
+                    style="padding: 0.5rem 1rem; font-size: 0.85rem;">
+                Clear Filters
+            </button>
+        </div>
+        <div id="filterResults" style="margin-top: 0.5rem; font-size: 0.85rem; color: var(--text-dim);"></div>
+    </div>
+    
     <!-- Device Grid -->
     <div id="deviceGrid" class="device-grid">
         <div class="empty-state" id="emptyState">
@@ -720,7 +762,7 @@
 
             <!-- Apply Button -->
             <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #334155;">
-                <button class="btn btn-primary" onclick="applyConfigToAll()" style="width: 100%;">
+                <button id="applyConfigBtn" class="btn btn-primary" onclick="applyConfigToAll()" style="width: 100%;">
                     ✅ Apply Configuration to All Devices
                 </button>
             </div>
